@@ -108,9 +108,9 @@ jobs:
       - name: Copy Deployment Package to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          host: ${{ secrets.EC2_HOST || secrets.SSH_HOST }}
+          username: ${{ secrets.EC2_USER || secrets.SSH_USER || 'ec2-user' }}
+          key: ${{ secrets.EC2_SSH_KEY || secrets.SSH_PRIVATE_KEY || secrets.SSH_KEY }}
           port: ${{ secrets.EC2_PORT || 22 }}
           source: "deploy.tar.gz"
           target: "/tmp"
@@ -118,9 +118,9 @@ jobs:
       - name: Execute Deployment on EC2
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          host: ${{ secrets.EC2_HOST || secrets.SSH_HOST }}
+          username: ${{ secrets.EC2_USER || secrets.SSH_USER || 'ec2-user' }}
+          key: ${{ secrets.EC2_SSH_KEY || secrets.SSH_PRIVATE_KEY || secrets.SSH_KEY }}
           port: ${{ secrets.EC2_PORT || 22 }}
           script: |
             set -e
@@ -167,8 +167,9 @@ jobs:
 
       - name: Verify Health Endpoint
         run: |
-          echo "Checking application health endpoint at http://${{ secrets.EC2_HOST }}/up..."
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "http://${{ secrets.EC2_HOST }}/up" || echo "failed")
+          TARGET_HOST="${{ secrets.EC2_HOST || secrets.SSH_HOST }}"
+          echo "Checking application health endpoint at http://${TARGET_HOST}/up..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "http://${TARGET_HOST}/up" || echo "failed")
           echo "HTTP Status: $STATUS"
           if [ "$STATUS" = "200" ]; then
             echo "Health check passed successfully!"
