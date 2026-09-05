@@ -44,11 +44,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'npm'
 
       - name: Install NPM Dependencies & Build Assets
         run: |
-          npm ci || npm install
+          npm install
           npm run build
 
       - name: Prepare Test Environment
@@ -86,11 +85,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'npm'
 
       - name: Install NPM Dependencies & Build Production Assets
         run: |
-          npm ci || npm install
+          npm install
           npm run build
 
       - name: Create Deployment Package
