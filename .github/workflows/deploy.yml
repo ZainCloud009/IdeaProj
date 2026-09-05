@@ -93,17 +93,17 @@ jobs:
 
       - name: Create Deployment Package
         run: |
-          tar -czf deploy.tar.gz \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='node_modules' \
-            --exclude='.terraform' \
-            --exclude='.terraform.lock.hcl' \
-            --exclude='terraform.tfstate*' \
-            --exclude='tests' \
-            --exclude='phpunit.xml' \
-            --exclude='deploy.tar.gz' \
+          tar --warning=no-file-changed -czf /tmp/deploy.tar.gz \
+            --exclude='./.git' \
+            --exclude='./.github' \
+            --exclude='./node_modules' \
+            --exclude='./.terraform' \
+            --exclude='./.terraform.lock.hcl' \
+            --exclude='./terraform.tfstate*' \
+            --exclude='./tests' \
+            --exclude='./phpunit.xml' \
             .
+          mv /tmp/deploy.tar.gz deploy.tar.gz
 
       - name: Copy Deployment Package to EC2
         uses: appleboy/scp-action@v0.1.7
