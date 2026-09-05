@@ -149,6 +149,7 @@ jobs:
 
             echo "==> Ensuring MariaDB is running and database exists..."
             sudo systemctl enable --now mariadb
+<<<<<<< HEAD
 
             DB_PASS="${DB_PASSWORD:-idea_secure_2026}"
 
@@ -167,6 +168,13 @@ jobs:
             sudo sed -i "s/^DB_DATABASE=.*/DB_DATABASE=idea/" .env
             sudo sed -i "s/^DB_USERNAME=.*/DB_USERNAME=idea_user/" .env
             sudo sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=$DB_PASS/" .env
+=======
+            sudo mysql -e "CREATE DATABASE IF NOT EXISTS idea CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+            sudo mysql -e "CREATE USER IF NOT EXISTS 'zain'@'127.0.0.1' IDENTIFIED BY '';"
+            sudo mysql -e "ALTER USER 'zain'@'127.0.0.1' IDENTIFIED BY '';"
+            sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'zain'@'127.0.0.1' WITH GRANT OPTION;"
+            sudo mysql -e "FLUSH PRIVILEGES;"
+>>>>>>> 81487b106a58c6acedfc3fb5f22605d583a565b8
 
             echo "==> Running database migrations..."
             sudo php artisan config:clear
