@@ -83,21 +83,49 @@ resource "aws_instance" "web_server" {
     #!/bin/bash
     sudo dnf update -y
     
-    # HTTPD, MariaDB, PHP install karna
-    sudo dnf install -y httpd mariadb105-server php php-mysqli php-fpm wget unzip tar
+    # Apache, MariaDB, and PHP with all required Laravel extensions
+    sudo dnf install -y httpd mariadb105-server php php-fpm php-mysqli php-mysqlnd php-xml php-mbstring php-curl php-zip php-intl php-bcmath php-opcache php-gd wget unzip tar
     
     # Services start aur enable karna
-    sudo systemctl start httpd
-    sudo systemctl enable httpd
-    sudo systemctl start mariadb
-    sudo systemctl enable mariadb
+    sudo systemctl enable --now httpd
+    sudo systemctl enable --now php-fpm
+    sudo systemctl enable --now mariadb
     
+    # MariaDB 'idea' database ensure karna
+    sudo mysql -e "CREATE DATABASE IF NOT EXISTS idea CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    
+    # Apache Virtual Host configure karna for Laravel
+    sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null << 'VHOST'
+    <VirtualHost *:80>
+        DocumentRoot "/var/www/html/public"
+        <Directory "/var/www/html/public">
+            Options Indexes FollowSymLinks
+            AllowOverride All
+            Require all granted
+        </Directory>
+        Alias /phpmyadmin /var/www/html/phpmyadmin
+        <Directory "/var/www/html/phpmyadmin">
+            Options Indexes FollowSymLinks
+            AllowOverride All
+            Require all granted
+        </Directory>
+    </VirtualHost>
+VHOST
+
+    # Permissions setup for ec2-user and apache
+    sudo mkdir -p /var/www/html/public /var/www/html/storage /var/www/html/bootstrap/cache
+    sudo usermod -a -G apache ec2-user
+    sudo chown -R ec2-user:apache /var/www/html
+    sudo chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
+
     # phpMyAdmin download aur extract karna
     cd /var/www/html
     sudo wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.tar.gz
     sudo tar -xvzf phpMyAdmin-latest-all-languages.tar.gz
     sudo mv phpMyAdmin-*-all-languages phpmyadmin
     sudo rm -rf phpMyAdmin-latest-all-languages.tar.gz
+
+    sudo systemctl restart php-fpm httpd
   EOF
 
   tags = {

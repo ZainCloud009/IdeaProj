@@ -1,0 +1,179 @@
+name: Deploy Laravel App
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  # ==========================================================
+  # 1. CI / Test Job: Ensures code quality before deployment
+  # ==========================================================
+  test:
+    name: Run Tests & Build Assets
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, xml, ctype, iconv, intl, pdo, pdo_sqlite, pdo_mysql, bcmath, curl, zip, fileinfo
+          coverage: none
+
+      - name: Get Composer Cache Directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer Dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install Composer Dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install NPM Dependencies & Build Assets
+        run: |
+          npm ci || npm install
+          npm run build
+
+      - name: Prepare Test Environment
+        run: |
+          php -r "file_exists('.env') || copy('.env.example', '.env');"
+          php artisan key:generate
+
+      - name: Run Tests
+        run: php artisan test
+
+  # ==========================================================
+  # 2. CD / Deploy Job: Packages and deploys to AWS EC2
+  # ==========================================================
+  deploy:
+    name: Deploy to AWS EC2
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, xml, ctype, iconv, intl, pdo, pdo_mysql, bcmath, curl, zip, fileinfo
+          coverage: none
+
+      - name: Install Production Composer Dependencies
+        run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install NPM Dependencies & Build Production Assets
+        run: |
+          npm ci || npm install
+          npm run build
+
+      - name: Create Deployment Package
+        run: |
+          tar -czf deploy.tar.gz \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='node_modules' \
+            --exclude='.terraform' \
+            --exclude='.terraform.lock.hcl' \
+            --exclude='terraform.tfstate*' \
+            --exclude='tests' \
+            --exclude='phpunit.xml' \
+            --exclude='deploy.tar.gz' \
+            .
+
+      - name: Copy Deployment Package to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_PORT || 22 }}
+          source: "deploy.tar.gz"
+          target: "/tmp"
+
+      - name: Execute Deployment on EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_PORT || 22 }}
+          script: |
+            set -e
+
+            APP_DIR="/var/www/html"
+
+            echo "==> Ensuring application directory exists..."
+            sudo mkdir -p $APP_DIR
+
+            echo "==> Extracting release package..."
+            sudo tar -xzf /tmp/deploy.tar.gz -C $APP_DIR
+            sudo rm -f /tmp/deploy.tar.gz
+
+            cd $APP_DIR
+
+            echo "==> Setting up environment file..."
+            if [ ! -f .env ]; then
+              if [ -f .env.example ]; then
+                sudo cp .env.example .env
+                sudo php artisan key:generate --force
+              fi
+            fi
+
+            echo "==> Running database migrations..."
+            sudo php artisan migrate --force
+
+            echo "==> Creating storage link..."
+            sudo php artisan storage:link || true
+
+            echo "==> Caching configuration, routes, and views..."
+            sudo php artisan config:cache
+            sudo php artisan route:cache
+            sudo php artisan view:cache
+
+            echo "==> Setting directory permissions..."
+            sudo chown -R ec2-user:apache $APP_DIR
+            sudo chmod -R 775 $APP_DIR/storage $APP_DIR/bootstrap/cache
+
+            echo "==> Restarting / Reloading web services..."
+            sudo systemctl restart php-fpm || sudo systemctl reload php-fpm
+            sudo systemctl reload httpd || sudo systemctl restart httpd
+
+            echo "==> Deployment completed successfully!"
+
+      - name: Verify Health Endpoint
+        run: |
+          echo "Checking application health endpoint at http://${{ secrets.EC2_HOST }}/up..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "http://${{ secrets.EC2_HOST }}/up" || echo "failed")
+          echo "HTTP Status: $STATUS"
+          if [ "$STATUS" = "200" ]; then
+            echo "Health check passed successfully!"
+          else
+            echo "Health check returned $STATUS. Note: Ensure port 80 is open in your EC2 Security Group and Apache DocumentRoot is set to /var/www/html/public."
+          fi
