@@ -33,11 +33,15 @@ sudo systemctl enable --now php-fpm
 sudo systemctl enable --now mariadb
 
 echo "==> Ensuring MariaDB database 'idea' and users exist..."
-sudo mysql -e "CREATE DATABASE IF NOT EXISTS idea CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-sudo mysql -e "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '';"
-sudo mysql -e "ALTER USER 'root'@'127.0.0.1' IDENTIFIED BY '';"
-sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;"
-sudo mysql -e "FLUSH PRIVILEGES;"
+DB_PASS="${DB_PASSWORD:-idea_secure_2026}"
+sudo mysql -u root -e "CREATE DATABASE IF NOT EXISTS idea CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+sudo mysql -u root -e "CREATE USER IF NOT EXISTS 'idea_user'@'127.0.0.1' IDENTIFIED BY '$DB_PASS';"
+sudo mysql -u root -e "ALTER USER 'idea_user'@'127.0.0.1' IDENTIFIED BY '$DB_PASS';"
+sudo mysql -u root -e "GRANT ALL PRIVILEGES ON idea.* TO 'idea_user'@'127.0.0.1';"
+sudo mysql -u root -e "CREATE USER IF NOT EXISTS 'idea_user'@'localhost' IDENTIFIED BY '$DB_PASS';"
+sudo mysql -u root -e "ALTER USER 'idea_user'@'localhost' IDENTIFIED BY '$DB_PASS';"
+sudo mysql -u root -e "GRANT ALL PRIVILEGES ON idea.* TO 'idea_user'@'localhost';"
+sudo mysql -u root -e "FLUSH PRIVILEGES;"
 
 echo "==> Configuring Apache Virtual Host for Laravel..."
 # Configure Apache to serve from /var/www/html/public and allow .htaccess overrides

@@ -147,27 +147,29 @@ jobs:
               fi
             fi
 
-            # Update DB_PASSWORD in .env if configured in secrets
-            if [ -n "$DB_PASSWORD" ]; then
-              sudo sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=$DB_PASSWORD/" .env
-            fi
-
             echo "==> Ensuring MariaDB is running and database exists..."
             sudo systemctl enable --now mariadb
 
-            if [ -n "$DB_PASSWORD" ]; then
-              MYSQL_CMD="sudo mysql -u root -p$DB_PASSWORD"
-            else
-              MYSQL_CMD="sudo mysql -u root"
-            fi
+            DB_PASS="${DB_PASSWORD:-idea_secure_2026}"
 
-            $MYSQL_CMD -e "CREATE DATABASE IF NOT EXISTS idea CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-            $MYSQL_CMD -e "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';"
-            $MYSQL_CMD -e "ALTER USER 'root'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';"
-            $MYSQL_CMD -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;"
-            $MYSQL_CMD -e "FLUSH PRIVILEGES;"
+            # Create database and dedicated application user (bypasses root unix_socket Error 1698)
+            sudo mysql -u root -e "CREATE DATABASE IF NOT EXISTS idea CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+            sudo mysql -u root -e "CREATE USER IF NOT EXISTS 'idea_user'@'127.0.0.1' IDENTIFIED BY '$DB_PASS';"
+            sudo mysql -u root -e "ALTER USER 'idea_user'@'127.0.0.1' IDENTIFIED BY '$DB_PASS';"
+            sudo mysql -u root -e "GRANT ALL PRIVILEGES ON idea.* TO 'idea_user'@'127.0.0.1';"
+            sudo mysql -u root -e "CREATE USER IF NOT EXISTS 'idea_user'@'localhost' IDENTIFIED BY '$DB_PASS';"
+            sudo mysql -u root -e "ALTER USER 'idea_user'@'localhost' IDENTIFIED BY '$DB_PASS';"
+            sudo mysql -u root -e "GRANT ALL PRIVILEGES ON idea.* TO 'idea_user'@'localhost';"
+            sudo mysql -u root -e "FLUSH PRIVILEGES;"
+
+            # Configure .env with dedicated application database user
+            sudo sed -i "s/^DB_HOST=.*/DB_HOST=127.0.0.1/" .env
+            sudo sed -i "s/^DB_DATABASE=.*/DB_DATABASE=idea/" .env
+            sudo sed -i "s/^DB_USERNAME=.*/DB_USERNAME=idea_user/" .env
+            sudo sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=$DB_PASS/" .env
 
             echo "==> Running database migrations..."
+            sudo php artisan config:clear
             sudo php artisan migrate --force
 
             echo "==> Creating storage link..."
