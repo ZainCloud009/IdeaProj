@@ -93,6 +93,10 @@ resource "aws_instance" "web_server" {
     
     # MariaDB 'idea' database ensure karna
     sudo mysql -e "CREATE DATABASE IF NOT EXISTS idea CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    sudo mysql -e "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '';"
+    sudo mysql -e "ALTER USER 'root'@'127.0.0.1' IDENTIFIED BY '';"
+    sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;"
+    sudo mysql -e "FLUSH PRIVILEGES;"
     
     # Apache Virtual Host configure karna for Laravel
     sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null << 'VHOST'

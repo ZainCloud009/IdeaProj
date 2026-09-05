@@ -32,8 +32,12 @@ sudo systemctl enable --now httpd
 sudo systemctl enable --now php-fpm
 sudo systemctl enable --now mariadb
 
-echo "==> Ensuring MariaDB database 'idea' exists..."
+echo "==> Ensuring MariaDB database 'idea' and users exist..."
 sudo mysql -e "CREATE DATABASE IF NOT EXISTS idea CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+sudo mysql -e "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '';"
+sudo mysql -e "ALTER USER 'root'@'127.0.0.1' IDENTIFIED BY '';"
+sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;"
+sudo mysql -e "FLUSH PRIVILEGES;"
 
 echo "==> Configuring Apache Virtual Host for Laravel..."
 # Configure Apache to serve from /var/www/html/public and allow .htaccess overrides
