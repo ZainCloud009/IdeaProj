@@ -253,29 +253,25 @@ jobs:
             sudo ln -sfn "$CURRENT_LINK/public" "$APP_BASE/public"
 
             # 13. Ensure Apache VirtualHost points to /var/www/html/IdeaProj/current/public
-            sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null << 'VHOST'
-<VirtualHost *:80>
-    ServerName localhost
-    ServerAlias *
-    DocumentRoot "/var/www/html/IdeaProj/current/public"
-
-    <Directory "/var/www/html/IdeaProj/current/public">
-        Options Indexes FollowSymLinks
-        AllowOverride All
-        Require all granted
-    </Directory>
-
-    Alias /IdeaProj/public /var/www/html/IdeaProj/current/public
-    Alias /IdeaProj /var/www/html/IdeaProj/current/public
-
-    Alias /phpmyadmin /var/www/html/phpmyadmin
-    <Directory "/var/www/html/phpmyadmin">
-        Options Indexes FollowSymLinks
-        AllowOverride All
-        Require all granted
-    </Directory>
-</VirtualHost>
-VHOST
+            printf '%s\n' \
+              '<VirtualHost *:80>' \
+              '    ServerName localhost' \
+              '    ServerAlias *' \
+              '    DocumentRoot "/var/www/html/IdeaProj/current/public"' \
+              '    <Directory "/var/www/html/IdeaProj/current/public">' \
+              '        Options Indexes FollowSymLinks' \
+              '        AllowOverride All' \
+              '        Require all granted' \
+              '    </Directory>' \
+              '    Alias /IdeaProj/public /var/www/html/IdeaProj/current/public' \
+              '    Alias /IdeaProj /var/www/html/IdeaProj/current/public' \
+              '    Alias /phpmyadmin /var/www/html/phpmyadmin' \
+              '    <Directory "/var/www/html/phpmyadmin">' \
+              '        Options Indexes FollowSymLinks' \
+              '        AllowOverride All' \
+              '        Require all granted' \
+              '    </Directory>' \
+              '</VirtualHost>' | sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null
 
             # Restart PHP-FPM to completely flush in-memory OPcache and reload Apache
             sudo systemctl restart php-fpm
