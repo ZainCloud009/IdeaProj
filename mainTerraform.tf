@@ -97,8 +97,8 @@ resource "aws_instance" "web_server" {
     # Apache Virtual Host configure karna for Laravel
     sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null << 'VHOST'
     <VirtualHost *:80>
-        DocumentRoot "/var/www/html/public"
-        <Directory "/var/www/html/public">
+        DocumentRoot "/var/www/html/IdeaProj/public"
+        <Directory "/var/www/html/IdeaProj/public">
             Options Indexes FollowSymLinks
             AllowOverride All
             Require all granted
@@ -113,10 +113,10 @@ resource "aws_instance" "web_server" {
 VHOST
 
     # Permissions setup for ec2-user and apache
-    sudo mkdir -p /var/www/html/public /var/www/html/storage /var/www/html/bootstrap/cache
+    sudo mkdir -p /var/www/html/IdeaProj/public /var/www/html/IdeaProj/storage /var/www/html/IdeaProj/bootstrap/cache
     sudo usermod -a -G apache ec2-user
-    sudo chown -R ec2-user:apache /var/www/html
-    sudo chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
+    sudo chown -R ec2-user:apache /var/www/html/IdeaProj
+    sudo chmod -R 775 /var/www/html/IdeaProj/storage /var/www/html/IdeaProj/bootstrap/cache
 
     # phpMyAdmin download aur extract karna
     cd /var/www/html

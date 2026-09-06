@@ -36,12 +36,12 @@ echo "==> Ensuring MariaDB database 'idea' exists..."
 sudo mysql -u root -e "CREATE DATABASE IF NOT EXISTS idea CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || true
 
 echo "==> Configuring Apache Virtual Host for Laravel..."
-# Configure Apache to serve from /var/www/html/public and allow .htaccess overrides
+# Configure Apache to serve from /var/www/html/IdeaProj/public and allow .htaccess overrides
 sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null << 'EOF'
 <VirtualHost *:80>
-    DocumentRoot "/var/www/html/public"
+    DocumentRoot "/var/www/html/IdeaProj/public"
 
-    <Directory "/var/www/html/public">
+    <Directory "/var/www/html/IdeaProj/public">
         Options Indexes FollowSymLinks
         AllowOverride All
         Require all granted
@@ -71,13 +71,13 @@ if [ ! -d "/var/www/html/phpmyadmin" ]; then
 fi
 
 echo "==> Configuring directory permissions for ec2-user and apache..."
-sudo mkdir -p /var/www/html/public
-sudo mkdir -p /var/www/html/storage
-sudo mkdir -p /var/www/html/bootstrap/cache
+sudo mkdir -p /var/www/html/IdeaProj/public
+sudo mkdir -p /var/www/html/IdeaProj/storage
+sudo mkdir -p /var/www/html/IdeaProj/bootstrap/cache
 
 sudo usermod -a -G apache ec2-user
-sudo chown -R ec2-user:apache /var/www/html
-sudo chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
+sudo chown -R ec2-user:apache /var/www/html/IdeaProj
+sudo chmod -R 775 /var/www/html/IdeaProj/storage /var/www/html/IdeaProj/bootstrap/cache
 
 echo "==> Restarting Apache and PHP-FPM..."
 sudo systemctl restart php-fpm

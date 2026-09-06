@@ -3,69 +3,20 @@ name: Deploy Laravel App
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
+# ==============================================================================
+# Concurrency: If multiple developers push simultaneously, cancel older
+# in-progress runs and deploy the latest commit immediately.
+# ==============================================================================
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
+
 jobs:
-  # ==========================================================
-  # 1. CI / Test Job: Ensures code quality before deployment
-  # ==========================================================
-  test:
-    name: Run Tests & Build Assets
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.2'
-          extensions: mbstring, xml, ctype, iconv, intl, pdo, pdo_sqlite, pdo_mysql, bcmath, curl, zip, fileinfo
-          coverage: none
-
-      - name: Get Composer Cache Directory
-        id: composer-cache
-        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
-
-      - name: Cache Composer Dependencies
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.composer-cache.outputs.dir }}
-          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
-          restore-keys: ${{ runner.os }}-composer-
-
-      - name: Install Composer Dependencies
-        run: composer install --prefer-dist --no-interaction --no-progress
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install NPM Dependencies & Build Assets
-        run: |
-          npm install
-          npm run build
-
-      - name: Prepare Test Environment
-        run: |
-          php -r "file_exists('.env') || copy('.env.example', '.env');"
-          php artisan key:generate
-
-      - name: Run Tests
-        run: php artisan test
-
-  # ==========================================================
-  # 2. CD / Deploy Job: Packages and deploys to AWS EC2
-  # ==========================================================
   deploy:
-    name: Deploy to AWS EC2
-    needs: test
+    name: Fast Deploy to AWS EC2
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
 
     steps:
       - name: Checkout Code
@@ -78,6 +29,13 @@ jobs:
           extensions: mbstring, xml, ctype, iconv, intl, pdo, pdo_mysql, bcmath, curl, zip, fileinfo
           coverage: none
 
+      - name: Cache Composer Dependencies
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
       - name: Install Production Composer Dependencies
         run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
 
@@ -86,9 +44,16 @@ jobs:
         with:
           node-version: 22
 
+      - name: Cache Node Modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-node-
+
       - name: Install NPM Dependencies & Build Production Assets
         run: |
-          npm install
+          npm install --prefer-offline --no-audit
           npm run build
 
       - name: Create Deployment Package
@@ -114,6 +79,7 @@ jobs:
           port: ${{ secrets.EC2_PORT || 22 }}
           source: "deploy.tar.gz"
           target: "/tmp"
+          timeout: 30s
 
       - name: Execute Deployment on EC2
         uses: appleboy/ssh-action@v1.2.0
@@ -124,16 +90,18 @@ jobs:
           username: ${{ secrets.EC2_USER || secrets.SSH_USER || 'ec2-user' }}
           key: ${{ secrets.EC2_SSH_KEY || secrets.SSH_PRIVATE_KEY || secrets.SSH_KEY }}
           port: ${{ secrets.EC2_PORT || 22 }}
+          command_timeout: 60s
           envs: DB_PASSWORD
           script: |
             set -e
 
-            APP_DIR="/var/www/html"
+            # Project repository folder inside /var/www/html/
+            APP_DIR="/var/www/html/IdeaProj"
 
-            echo "==> Ensuring application directory exists..."
+            echo "==> Ensuring project directory exists: $APP_DIR..."
             sudo mkdir -p $APP_DIR
 
-            echo "==> Extracting release package..."
+            echo "==> Extracting release package into $APP_DIR..."
             sudo tar -xzf /tmp/deploy.tar.gz -C $APP_DIR
             sudo rm -f /tmp/deploy.tar.gz
 
@@ -147,7 +115,7 @@ jobs:
               fi
             fi
 
-            # Update DB_PASSWORD in .env from GitHub Secrets
+            # Update DB_PASSWORD in .env if provided in GitHub Secrets
             if [ -n "$DB_PASSWORD" ]; then
               sudo sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=$DB_PASSWORD/" .env
             fi
@@ -171,20 +139,40 @@ jobs:
             sudo chown -R ec2-user:apache $APP_DIR
             sudo chmod -R 775 $APP_DIR/storage $APP_DIR/bootstrap/cache
 
-            echo "==> Restarting / Reloading web services..."
+            echo "==> Updating Apache configuration for /var/www/html/IdeaProj/public..."
+            sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null << 'VHOST'
+            <VirtualHost *:80>
+                DocumentRoot "/var/www/html/IdeaProj/public"
+
+                <Directory "/var/www/html/IdeaProj/public">
+                    Options Indexes FollowSymLinks
+                    AllowOverride All
+                    Require all granted
+                </Directory>
+
+                Alias /phpmyadmin /var/www/html/phpmyadmin
+                <Directory "/var/www/html/phpmyadmin">
+                    Options Indexes FollowSymLinks
+                    AllowOverride All
+                    Require all granted
+                </Directory>
+            </VirtualHost>
+            VHOST
+
+            echo "==> Reloading web services..."
             sudo systemctl restart php-fpm || sudo systemctl reload php-fpm
             sudo systemctl reload httpd || sudo systemctl restart httpd
 
-            echo "==> Deployment completed successfully!"
+            echo "==> Deployment to $APP_DIR completed successfully!"
 
       - name: Verify Health Endpoint
         run: |
           TARGET_HOST="${{ secrets.EC2_HOST || secrets.SSH_HOST }}"
           echo "Checking application health endpoint at http://${TARGET_HOST}/up..."
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "http://${TARGET_HOST}/up" || echo "failed")
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://${TARGET_HOST}/up" || echo "failed")
           echo "HTTP Status: $STATUS"
           if [ "$STATUS" = "200" ]; then
-            echo "Health check passed successfully!"
+            echo "Deployment verified: Health check passed successfully!"
           else
-            echo "Health check returned $STATUS. Note: Ensure port 80 is open in your EC2 Security Group and Apache DocumentRoot is set to /var/www/html/public."
+            echo "Health check returned $STATUS. Please verify server security group port 80 and Apache configuration."
           fi
