@@ -44,6 +44,8 @@ echo "==> Configuring Apache Virtual Host for Laravel..."
 # Configure Apache to serve from /var/www/html/IdeaProj/current/public and allow .htaccess overrides
 sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null << 'EOF'
 <VirtualHost *:80>
+    ServerName localhost
+    ServerAlias *
     DocumentRoot "/var/www/html/IdeaProj/current/public"
 
     <Directory "/var/www/html/IdeaProj/current/public">
@@ -51,6 +53,9 @@ sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null << 'EOF'
         AllowOverride All
         Require all granted
     </Directory>
+
+    Alias /IdeaProj/public /var/www/html/IdeaProj/current/public
+    Alias /IdeaProj /var/www/html/IdeaProj/current/public
 
     # Alias to keep phpmyadmin accessible at http://<server-ip>/phpmyadmin
     Alias /phpmyadmin /var/www/html/phpmyadmin

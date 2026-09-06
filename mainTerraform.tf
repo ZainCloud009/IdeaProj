@@ -100,12 +100,16 @@ resource "aws_instance" "web_server" {
     # Apache Virtual Host configure karna for Laravel
     sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null << 'VHOST'
     <VirtualHost *:80>
+        ServerName localhost
+        ServerAlias *
         DocumentRoot "/var/www/html/IdeaProj/current/public"
         <Directory "/var/www/html/IdeaProj/current/public">
             Options Indexes FollowSymLinks
             AllowOverride All
             Require all granted
         </Directory>
+        Alias /IdeaProj/public /var/www/html/IdeaProj/current/public
+        Alias /IdeaProj /var/www/html/IdeaProj/current/public
         Alias /phpmyadmin /var/www/html/phpmyadmin
         <Directory "/var/www/html/phpmyadmin">
             Options Indexes FollowSymLinks

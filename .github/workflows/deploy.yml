@@ -222,17 +222,17 @@ jobs:
                 echo "==> Restoring previous release: $PREVIOUS_RELEASE";
                 ln -sfn "$PREVIOUS_RELEASE" "$APP_BASE/current_temp";
                 mv -Tf "$APP_BASE/current_temp" "$CURRENT_LINK";
-                sudo systemctl reload php-fpm || sudo systemctl restart php-fpm || true;
-                sudo systemctl reload httpd || sudo systemctl restart httpd || true;
+                sudo systemctl restart php-fpm || true;
+                sudo systemctl restart httpd || true;
                 echo "==> Auto-Rollback Successful! Site restored to previous working release.";
               fi;
               rm -rf "$NEW_RELEASE";
               exit 1;
             ' ERR
 
-            # 10. Run migrations and cache optimizations
+            # 10. Run migrations and cache optimizations (clear old view/config cache)
             php artisan storage:link --quiet || true
-            php artisan config:clear --quiet
+            php artisan optimize:clear --quiet
             php artisan migrate --force
             php artisan config:cache --quiet
             php artisan route:cache --quiet
@@ -246,36 +246,48 @@ jobs:
             ln -sfn "$NEW_RELEASE" "$APP_BASE/current_temp"
             mv -Tf "$APP_BASE/current_temp" "$CURRENT_LINK"
 
-            # 13. Ensure Apache VirtualHost points to /var/www/html/IdeaProj/current/public
-            if [ ! -f /etc/httpd/conf.d/laravel.conf ] || ! grep -q "/var/www/html/IdeaProj/current/public" /etc/httpd/conf.d/laravel.conf; then
-              sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null << 'VHOST'
-            <VirtualHost *:80>
-                DocumentRoot "/var/www/html/IdeaProj/current/public"
-
-                <Directory "/var/www/html/IdeaProj/current/public">
-                    Options Indexes FollowSymLinks
-                    AllowOverride All
-                    Require all granted
-                </Directory>
-
-                Alias /phpmyadmin /var/www/html/phpmyadmin
-                <Directory "/var/www/html/phpmyadmin">
-                    Options Indexes FollowSymLinks
-                    AllowOverride All
-                    Require all granted
-                </Directory>
-            </VirtualHost>
-            VHOST
+            # Clean up old legacy static public folder if present and link it
+            if [ -d "$APP_BASE/public" ] && [ ! -L "$APP_BASE/public" ]; then
+              sudo rm -rf "$APP_BASE/public"
             fi
+            sudo ln -sfn "$CURRENT_LINK/public" "$APP_BASE/public"
 
-            sudo systemctl reload php-fpm || sudo systemctl restart php-fpm
-            sudo systemctl reload httpd || sudo systemctl restart httpd
+            # 13. Ensure Apache VirtualHost points to /var/www/html/IdeaProj/current/public
+            sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null << 'VHOST'
+<VirtualHost *:80>
+    ServerName localhost
+    ServerAlias *
+    DocumentRoot "/var/www/html/IdeaProj/current/public"
+
+    <Directory "/var/www/html/IdeaProj/current/public">
+        Options Indexes FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    Alias /IdeaProj/public /var/www/html/IdeaProj/current/public
+    Alias /IdeaProj /var/www/html/IdeaProj/current/public
+
+    Alias /phpmyadmin /var/www/html/phpmyadmin
+    <Directory "/var/www/html/phpmyadmin">
+        Options Indexes FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+</VirtualHost>
+VHOST
+
+            # Restart PHP-FPM to completely flush in-memory OPcache and reload Apache
+            sudo systemctl restart php-fpm
+            sudo systemctl restart httpd
 
             # 14. Post-switch Health Verification
             sleep 1
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://127.0.0.1/up" || echo "failed")
             if [ "$STATUS" = "200" ]; then
               echo "==> Health Check PASSED (HTTP 200)! Release $RELEASE_NAME is LIVE."
+              echo "==> Live HTML verification snippet:"
+              curl -s "http://127.0.0.1/" | grep -E "(Think|ambitious)" | head -n 5 || true
               # Keep only last 3 releases to preserve disk space
               ls -dt $RELEASES_DIR/* | tail -n +4 | xargs -r rm -rf
             else
@@ -283,8 +295,8 @@ jobs:
               if [ -n "$PREVIOUS_RELEASE" ] && [ -d "$PREVIOUS_RELEASE" ]; then
                 ln -sfn "$PREVIOUS_RELEASE" "$APP_BASE/current_temp"
                 mv -Tf "$APP_BASE/current_temp" "$CURRENT_LINK"
-                sudo systemctl reload php-fpm || sudo systemctl restart php-fpm || true
-                sudo systemctl reload httpd || sudo systemctl restart httpd || true
+                sudo systemctl restart php-fpm || true
+                sudo systemctl restart httpd || true
                 echo "==> Auto-Rollback Successful! Restored previous working release."
               fi
               rm -rf "$NEW_RELEASE"
