@@ -139,3 +139,23 @@ VHOST
     Name = "MyWebServer"
   }
 }
+
+# ==========================================
+# 5. ELASTIC IP
+# ==========================================
+
+# EC2 instance ke liye static Elastic IP allocate aur attach kar rahe hain
+resource "aws_eip" "web_eip" {
+  instance = aws_instance.web_server.id
+  domain   = "vpc"
+
+  tags = {
+    Name = "WebServerEIP"
+  }
+}
+
+# Elastic IP ko output console me show karne ke liye
+output "elastic_ip" {
+  description = "Elastic IP address of the EC2 Web Server"
+  value       = aws_eip.web_eip.public_ip
+}
