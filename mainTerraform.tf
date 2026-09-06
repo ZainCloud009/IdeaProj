@@ -84,8 +84,10 @@ resource "aws_instance" "web_server" {
     sudo dnf update -y
     
     # Apache, MariaDB, and PHP with all required Laravel extensions
-    sudo dnf install -y httpd mariadb105-server php php-fpm php-mysqli php-mysqlnd php-xml php-mbstring php-curl php-zip php-intl php-bcmath php-opcache php-gd git nodejs wget unzip tar
+    sudo dnf install -y httpd mariadb105-server php php-fpm php-mysqli php-mysqlnd php-xml php-mbstring php-curl php-zip php-intl php-bcmath php-opcache php-gd git wget unzip tar
+    sudo dnf install -y nodejs22 || sudo dnf install -y nodejs20 || sudo dnf install -y nodejs
     which composer >/dev/null 2>&1 || (curl -sS https://getcomposer.org/installer | sudo php -- --install-dir=/usr/local/bin --filename=composer)
+    sudo ln -sf /usr/local/bin/composer /usr/bin/composer 2>/dev/null || true
     
     # Services start aur enable karna
     sudo systemctl enable --now httpd

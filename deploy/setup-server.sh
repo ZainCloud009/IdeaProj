@@ -24,12 +24,13 @@ sudo dnf install -y \
   php-opcache \
   php-gd \
   git \
-  nodejs \
   wget \
   unzip \
   tar
 
+sudo dnf install -y nodejs22 || sudo dnf install -y nodejs20 || sudo dnf install -y nodejs
 which composer >/dev/null 2>&1 || (curl -sS https://getcomposer.org/installer | sudo php -- --install-dir=/usr/local/bin --filename=composer)
+sudo ln -sf /usr/local/bin/composer /usr/bin/composer 2>/dev/null || true
 
 echo "==> Starting and enabling services..."
 sudo systemctl enable --now httpd
