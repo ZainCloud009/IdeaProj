@@ -43,13 +43,17 @@ jobs:
 
             echo "==> Starting Instant Deployment for Release: $RELEASE_NAME..."
 
-            # 1. Ensure required directories and tools
+            # 1. Ensure required directories, permissions, and tools
             sudo mkdir -p $SHARED_DIR/storage/framework/cache
             sudo mkdir -p $SHARED_DIR/storage/framework/sessions
             sudo mkdir -p $SHARED_DIR/storage/framework/views
             sudo mkdir -p $SHARED_DIR/storage/logs
             sudo mkdir -p $SHARED_DIR/storage/app/public
             sudo mkdir -p $RELEASES_DIR
+
+            # Ensure ec2-user owns the project tree before cloning
+            sudo chown -R ec2-user:apache $APP_BASE
+            sudo chmod -R 775 $APP_BASE
 
             which git >/dev/null 2>&1 || sudo dnf install -y git
             which composer >/dev/null 2>&1 || (curl -sS https://getcomposer.org/installer | sudo php -- --install-dir=/usr/local/bin --filename=composer)
