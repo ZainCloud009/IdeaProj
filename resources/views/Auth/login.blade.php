@@ -37,7 +37,7 @@
             </form>
 
             <p class="text-center mt-8 text-sm text-gray-500">
-                Don't have an account? <a href="{{ route('register') }}" class="text-white hover:underline">Register</a>
+                Don't have an account?? <a href="{{ route('register') }}" class="text-white hover:underline">Register</a>
             </p>
         </div>
     </div>
