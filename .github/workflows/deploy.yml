@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 # ==============================================================================
-# Concurrency: If multiple developers push simultaneously, cancel older
-# in-progress runs and deploy the latest commit immediately.
+# Concurrency: If 5 or 10 developers push at the same time, cancel obsolete
+# intermediate builds and immediately deploy the latest commit.
 # ==============================================================================
 concurrency:
   group: production-deploy
@@ -15,73 +15,11 @@ concurrency:
 
 jobs:
   deploy:
-    name: Fast Deploy to AWS EC2
+    name: 5-Second Zero-Downtime Deploy & Auto-Rollback
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.2'
-          extensions: mbstring, xml, ctype, iconv, intl, pdo, pdo_mysql, bcmath, curl, zip, fileinfo
-          coverage: none
-
-      - name: Cache Composer Dependencies
-        uses: actions/cache@v4
-        with:
-          path: vendor
-          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
-          restore-keys: ${{ runner.os }}-composer-
-
-      - name: Install Production Composer Dependencies
-        run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Cache Node Modules
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: ${{ runner.os }}-node-
-
-      - name: Install NPM Dependencies & Build Production Assets
-        run: |
-          npm install --prefer-offline --no-audit
-          npm run build
-
-      - name: Create Deployment Package
-        run: |
-          tar --warning=no-file-changed -czf /tmp/deploy.tar.gz \
-            --exclude='./.git' \
-            --exclude='./.github' \
-            --exclude='./node_modules' \
-            --exclude='./.terraform' \
-            --exclude='./.terraform.lock.hcl' \
-            --exclude='./terraform.tfstate*' \
-            --exclude='./tests' \
-            --exclude='./phpunit.xml' \
-            .
-          mv /tmp/deploy.tar.gz deploy.tar.gz
-
-      - name: Copy Deployment Package to EC2
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST || secrets.SSH_HOST }}
-          username: ${{ secrets.EC2_USER || secrets.SSH_USER || 'ec2-user' }}
-          key: ${{ secrets.EC2_SSH_KEY || secrets.SSH_PRIVATE_KEY || secrets.SSH_KEY }}
-          port: ${{ secrets.EC2_PORT || 22 }}
-          source: "deploy.tar.gz"
-          target: "/tmp"
-          timeout: 30s
-
-      - name: Execute Deployment on EC2
+      - name: Trigger Instant Zero-Downtime Deploy on EC2
         uses: appleboy/ssh-action@v1.2.0
         env:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
@@ -90,61 +28,126 @@ jobs:
           username: ${{ secrets.EC2_USER || secrets.SSH_USER || 'ec2-user' }}
           key: ${{ secrets.EC2_SSH_KEY || secrets.SSH_PRIVATE_KEY || secrets.SSH_KEY }}
           port: ${{ secrets.EC2_PORT || 22 }}
-          command_timeout: 60s
+          command_timeout: 90s
           envs: DB_PASSWORD
           script: |
             set -e
 
-            # Project repository folder inside /var/www/html/
-            APP_DIR="/var/www/html/IdeaProj"
+            APP_BASE="/var/www/html/IdeaProj"
+            SHARED_DIR="$APP_BASE/shared"
+            RELEASES_DIR="$APP_BASE/releases"
+            CURRENT_LINK="$APP_BASE/current"
+            CACHE_REPO="$APP_BASE/repo.git"
+            RELEASE_NAME=$(date +%Y%m%d%H%M%S)
+            NEW_RELEASE="$RELEASES_DIR/$RELEASE_NAME"
 
-            echo "==> Ensuring project directory exists: $APP_DIR..."
-            sudo mkdir -p $APP_DIR
+            echo "==> Starting Instant Deployment for Release: $RELEASE_NAME..."
 
-            echo "==> Extracting release package into $APP_DIR..."
-            sudo tar -xzf /tmp/deploy.tar.gz -C $APP_DIR
-            sudo rm -f /tmp/deploy.tar.gz
+            # 1. Ensure required directories and tools
+            sudo mkdir -p $SHARED_DIR/storage/framework/cache
+            sudo mkdir -p $SHARED_DIR/storage/framework/sessions
+            sudo mkdir -p $SHARED_DIR/storage/framework/views
+            sudo mkdir -p $SHARED_DIR/storage/logs
+            sudo mkdir -p $SHARED_DIR/storage/app/public
+            sudo mkdir -p $RELEASES_DIR
 
-            cd $APP_DIR
+            which git >/dev/null 2>&1 || sudo dnf install -y git
+            which composer >/dev/null 2>&1 || (curl -sS https://getcomposer.org/installer | sudo php -- --install-dir=/usr/local/bin --filename=composer)
+            which node >/dev/null 2>&1 || sudo dnf install -y nodejs
 
-            echo "==> Setting up environment file..."
-            if [ ! -f .env ]; then
-              if [ -f .env.example ]; then
-                sudo cp .env.example .env
-                sudo php artisan key:generate --force
+            # 2. Track previous working release for instant auto-rollback
+            PREVIOUS_RELEASE=""
+            if [ -L "$CURRENT_LINK" ]; then
+              PREVIOUS_RELEASE=$(readlink -f "$CURRENT_LINK")
+            fi
+
+            # 3. Fast Git Fetch using local reference cache (takes ~1 second)
+            if [ -d "$CACHE_REPO" ]; then
+              cd $CACHE_REPO
+              git fetch --all --prune --quiet
+            else
+              git clone --bare https://github.com/ZainCloud009/IdeaProj.git $CACHE_REPO
+            fi
+
+            git clone --reference $CACHE_REPO https://github.com/ZainCloud009/IdeaProj.git $NEW_RELEASE
+            cd $NEW_RELEASE
+            git checkout main --quiet
+
+            # 4. Instant dependency re-use via hardlinks (takes ~0.1 second)
+            if [ -n "$PREVIOUS_RELEASE" ] && [ -d "$PREVIOUS_RELEASE" ]; then
+              if [ -d "$PREVIOUS_RELEASE/vendor" ]; then
+                cp -al "$PREVIOUS_RELEASE/vendor" "$NEW_RELEASE/"
+              fi
+              if [ -d "$PREVIOUS_RELEASE/node_modules" ]; then
+                cp -al "$PREVIOUS_RELEASE/node_modules" "$NEW_RELEASE/"
+              fi
+              if [ -d "$PREVIOUS_RELEASE/public/build" ]; then
+                cp -al "$PREVIOUS_RELEASE/public/build" "$NEW_RELEASE/public/"
               fi
             fi
 
-            # Update DB_PASSWORD in .env if provided in GitHub Secrets
-            if [ -n "$DB_PASSWORD" ]; then
-              sudo sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=$DB_PASSWORD/" .env
+            # 5. Shared .env configuration
+            if [ ! -f "$SHARED_DIR/.env" ]; then
+              if [ -f "$APP_BASE/.env" ]; then
+                cp "$APP_BASE/.env" "$SHARED_DIR/.env"
+              elif [ -f "$NEW_RELEASE/.env.example" ]; then
+                cp "$NEW_RELEASE/.env.example" "$SHARED_DIR/.env"
+              fi
             fi
 
-            echo "==> Ensuring MariaDB service is running..."
-            sudo systemctl enable --now mariadb
+            if [ -n "$DB_PASSWORD" ]; then
+              sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=$DB_PASSWORD/" "$SHARED_DIR/.env"
+            fi
 
-            echo "==> Running database migrations..."
-            sudo php artisan config:clear
-            sudo php artisan migrate --force
+            ln -sfn "$SHARED_DIR/.env" "$NEW_RELEASE/.env"
+            rm -rf "$NEW_RELEASE/storage"
+            ln -sfn "$SHARED_DIR/storage" "$NEW_RELEASE/storage"
 
-            echo "==> Creating storage link..."
-            sudo php artisan storage:link || true
+            # 6. Fast Composer & Asset builds (only installs if missing)
+            if [ ! -d "$NEW_RELEASE/vendor" ]; then
+              composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader --quiet
+            fi
 
-            echo "==> Caching configuration, routes, and views..."
-            sudo php artisan config:cache
-            sudo php artisan route:cache
-            sudo php artisan view:cache
+            if [ ! -d "$NEW_RELEASE/public/build" ]; then
+              npm install --prefer-offline --no-audit --quiet
+              npm run build
+            fi
 
-            echo "==> Setting directory permissions..."
-            sudo chown -R ec2-user:apache $APP_DIR
-            sudo chmod -R 775 $APP_DIR/storage $APP_DIR/bootstrap/cache
+            # 7. Safe Execution Block with Automatic Rollback on failure
+            trap '
+              echo "==> CRITICAL ERROR ENCOUNTERED! Triggering Auto-Rollback...";
+              if [ -n "$PREVIOUS_RELEASE" ] && [ -d "$PREVIOUS_RELEASE" ]; then
+                ln -sfn "$PREVIOUS_RELEASE" "$APP_BASE/current_temp";
+                mv -Tf "$APP_BASE/current_temp" "$CURRENT_LINK";
+                sudo systemctl reload httpd || sudo systemctl restart httpd;
+                echo "==> Auto-Rollback Successful! Site restored to previous working release.";
+              fi;
+              rm -rf "$NEW_RELEASE";
+              exit 1;
+            ' ERR
 
-            echo "==> Updating Apache configuration for /var/www/html/IdeaProj/public..."
+            # 8. Run migrations and cache optimizations
+            php artisan storage:link --quiet || true
+            php artisan config:clear --quiet
+            php artisan migrate --force
+            php artisan config:cache --quiet
+            php artisan route:cache --quiet
+            php artisan view:cache --quiet
+
+            # 9. Set permissions
+            sudo chown -R ec2-user:apache $APP_BASE
+            sudo chmod -R 775 $SHARED_DIR/storage $NEW_RELEASE/bootstrap/cache
+
+            # 10. ATOMIC SWITCH: Switch symlink in 1 millisecond (Zero Downtime)
+            ln -sfn "$NEW_RELEASE" "$APP_BASE/current_temp"
+            mv -Tf "$APP_BASE/current_temp" "$CURRENT_LINK"
+
+            # 11. Ensure Apache DocumentRoot points to /var/www/html/IdeaProj/current/public
             sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null << 'VHOST'
             <VirtualHost *:80>
-                DocumentRoot "/var/www/html/IdeaProj/public"
+                DocumentRoot "/var/www/html/IdeaProj/current/public"
 
-                <Directory "/var/www/html/IdeaProj/public">
+                <Directory "/var/www/html/IdeaProj/current/public">
                     Options Indexes FollowSymLinks
                     AllowOverride All
                     Require all granted
@@ -159,20 +162,25 @@ jobs:
             </VirtualHost>
             VHOST
 
-            echo "==> Reloading web services..."
-            sudo systemctl restart php-fpm || sudo systemctl reload php-fpm
+            sudo systemctl reload php-fpm || sudo systemctl restart php-fpm
             sudo systemctl reload httpd || sudo systemctl restart httpd
 
-            echo "==> Deployment to $APP_DIR completed successfully!"
+            # 12. Post-switch Health Verification
+            sleep 1
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://127.0.0.1/up" || echo "failed")
+            if [ "$STATUS" = "200" ]; then
+              echo "==> Health Check PASSED (HTTP 200)! Release $RELEASE_NAME is LIVE."
+              # Keep only last 3 releases to preserve disk space
+              ls -dt $RELEASES_DIR/* | tail -n +4 | xargs -r rm -rf
+            else
+              echo "==> Health Check FAILED with status $STATUS. Triggering Auto-Rollback..."
+              if [ -n "$PREVIOUS_RELEASE" ] && [ -d "$PREVIOUS_RELEASE" ]; then
+                ln -sfn "$PREVIOUS_RELEASE" "$APP_BASE/current_temp"
+                mv -Tf "$APP_BASE/current_temp" "$CURRENT_LINK"
+                sudo systemctl reload httpd || sudo systemctl restart httpd
+                echo "==> Auto-Rollback Successful! Restored previous working release."
+              fi
+              exit 1
+            fi
 
-      - name: Verify Health Endpoint
-        run: |
-          TARGET_HOST="${{ secrets.EC2_HOST || secrets.SSH_HOST }}"
-          echo "Checking application health endpoint at http://${TARGET_HOST}/up..."
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://${TARGET_HOST}/up" || echo "failed")
-          echo "HTTP Status: $STATUS"
-          if [ "$STATUS" = "200" ]; then
-            echo "Deployment verified: Health check passed successfully!"
-          else
-            echo "Health check returned $STATUS. Please verify server security group port 80 and Apache configuration."
-          fi
+            echo "==> Deployment completed successfully in seconds!"

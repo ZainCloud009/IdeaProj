@@ -84,7 +84,8 @@ resource "aws_instance" "web_server" {
     sudo dnf update -y
     
     # Apache, MariaDB, and PHP with all required Laravel extensions
-    sudo dnf install -y httpd mariadb105-server php php-fpm php-mysqli php-mysqlnd php-xml php-mbstring php-curl php-zip php-intl php-bcmath php-opcache php-gd wget unzip tar
+    sudo dnf install -y httpd mariadb105-server php php-fpm php-mysqli php-mysqlnd php-xml php-mbstring php-curl php-zip php-intl php-bcmath php-opcache php-gd git nodejs wget unzip tar
+    which composer >/dev/null 2>&1 || (curl -sS https://getcomposer.org/installer | sudo php -- --install-dir=/usr/local/bin --filename=composer)
     
     # Services start aur enable karna
     sudo systemctl enable --now httpd
@@ -97,8 +98,8 @@ resource "aws_instance" "web_server" {
     # Apache Virtual Host configure karna for Laravel
     sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null << 'VHOST'
     <VirtualHost *:80>
-        DocumentRoot "/var/www/html/IdeaProj/public"
-        <Directory "/var/www/html/IdeaProj/public">
+        DocumentRoot "/var/www/html/IdeaProj/current/public"
+        <Directory "/var/www/html/IdeaProj/current/public">
             Options Indexes FollowSymLinks
             AllowOverride All
             Require all granted
@@ -113,10 +114,10 @@ resource "aws_instance" "web_server" {
 VHOST
 
     # Permissions setup for ec2-user and apache
-    sudo mkdir -p /var/www/html/IdeaProj/public /var/www/html/IdeaProj/storage /var/www/html/IdeaProj/bootstrap/cache
+    sudo mkdir -p /var/www/html/IdeaProj/shared/storage /var/www/html/IdeaProj/releases
     sudo usermod -a -G apache ec2-user
     sudo chown -R ec2-user:apache /var/www/html/IdeaProj
-    sudo chmod -R 775 /var/www/html/IdeaProj/storage /var/www/html/IdeaProj/bootstrap/cache
+    sudo chmod -R 775 /var/www/html/IdeaProj/shared/storage
 
     # phpMyAdmin download aur extract karna
     cd /var/www/html

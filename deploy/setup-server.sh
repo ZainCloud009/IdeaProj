@@ -23,9 +23,13 @@ sudo dnf install -y \
   php-bcmath \
   php-opcache \
   php-gd \
+  git \
+  nodejs \
   wget \
   unzip \
   tar
+
+which composer >/dev/null 2>&1 || (curl -sS https://getcomposer.org/installer | sudo php -- --install-dir=/usr/local/bin --filename=composer)
 
 echo "==> Starting and enabling services..."
 sudo systemctl enable --now httpd
@@ -36,12 +40,12 @@ echo "==> Ensuring MariaDB database 'idea' exists..."
 sudo mysql -u root -e "CREATE DATABASE IF NOT EXISTS idea CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || true
 
 echo "==> Configuring Apache Virtual Host for Laravel..."
-# Configure Apache to serve from /var/www/html/IdeaProj/public and allow .htaccess overrides
+# Configure Apache to serve from /var/www/html/IdeaProj/current/public and allow .htaccess overrides
 sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null << 'EOF'
 <VirtualHost *:80>
-    DocumentRoot "/var/www/html/IdeaProj/public"
+    DocumentRoot "/var/www/html/IdeaProj/current/public"
 
-    <Directory "/var/www/html/IdeaProj/public">
+    <Directory "/var/www/html/IdeaProj/current/public">
         Options Indexes FollowSymLinks
         AllowOverride All
         Require all granted
