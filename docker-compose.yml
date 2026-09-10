@@ -37,10 +37,10 @@ services:
     ports:
       - "3307:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: root_password
-      MYSQL_DATABASE: idea
-      MYSQL_USER: idea_user
-      MYSQL_PASSWORD: secret_password
+      MYSQL_ROOT_PASSWORD: "${DB_PASSWORD:-secret_password}"
+      MYSQL_DATABASE: "${DB_DATABASE:-idea}"
+      MYSQL_USER: "${DB_USERNAME:-idea_user}"
+      MYSQL_PASSWORD: "${DB_PASSWORD:-secret_password}"
     volumes:
       - mariadb_data:/var/lib/mysql
     networks:

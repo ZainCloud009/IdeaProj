@@ -58,11 +58,16 @@ sudo systemctl disable httpd 2>/dev/null || true
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_DIR"
 
-# Ensure .env exists
+# Ensure .env exists with proper db connection
 if [ ! -f .env ]; then
     echo "==> Creating .env from .env.example..."
     cp .env.example .env
 fi
+sed -i 's/^DB_CONNECTION=.*/DB_CONNECTION=mysql/' .env
+sed -i 's/^#* *DB_HOST=.*/DB_HOST=db/' .env
+sed -i 's/^#* *DB_PORT=.*/DB_PORT=3306/' .env
+sed -i 's/^#* *DB_DATABASE=.*/DB_DATABASE=idea/' .env
+sed -i 's/^#* *DB_USERNAME=.*/DB_USERNAME=root/' .env
 
 echo "==> Building application image with Docker..."
 docker build -t ideaproj-app:latest .
@@ -71,8 +76,30 @@ echo "==> Launching Docker containers..."
 $COMPOSE_CMD down --remove-orphans 2>/dev/null || true
 $COMPOSE_CMD up -d
 
-echo "==> Waiting for containers to initialize..."
-sleep 10
+echo "==> Waiting for database container to initialize..."
+sleep 12
+
+DB_PASS="${DB_PASSWORD:-secret_password}"
+docker exec ideaproj-db mariadb -u root -proot_password -e "
+  ALTER USER 'root'@'%' IDENTIFIED BY '${DB_PASS}';
+  GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY '${DB_PASS}' WITH GRANT OPTION;
+  CREATE USER IF NOT EXISTS 'idea_user'@'%' IDENTIFIED BY '${DB_PASS}';
+  ALTER USER 'idea_user'@'%' IDENTIFIED BY '${DB_PASS}';
+  GRANT ALL PRIVILEGES ON *.* TO 'idea_user'@'%';
+  FLUSH PRIVILEGES;
+" 2>/dev/null || docker exec ideaproj-db mariadb -u root -p"${DB_PASS}" -e "
+  GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY '${DB_PASS}' WITH GRANT OPTION;
+  CREATE USER IF NOT EXISTS 'idea_user'@'%' IDENTIFIED BY '${DB_PASS}';
+  ALTER USER 'idea_user'@'%' IDENTIFIED BY '${DB_PASS}';
+  GRANT ALL PRIVILEGES ON *.* TO 'idea_user'@'%';
+  FLUSH PRIVILEGES;
+" 2>/dev/null || true
+
+# Run migrations to ensure all tables exist (users, sessions, cache, ideas, steps)
+echo "==> Running Laravel database migrations inside container..."
+docker exec ideaproj-app php /var/www/html/artisan migrate --force || true
+docker exec ideaproj-app php /var/www/html/artisan optimize:clear || true
+docker exec ideaproj-app php /var/www/html/artisan config:cache || true
 
 echo "==> Container Status:"
 docker ps --filter "name=ideaproj"

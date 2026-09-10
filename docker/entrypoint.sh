@@ -3,7 +3,7 @@ set -e
 
 echo "==> Starting Laravel container entrypoint..."
 
-# 1. Ensure .env file exists
+# 1. Ensure .env file exists and has all Docker environment variables
 if [ ! -f /var/www/html/.env ]; then
     if [ -f /var/www/html/.env.example ]; then
         echo "==> Creating .env from .env.example..."
@@ -12,6 +12,20 @@ if [ ! -f /var/www/html/.env ]; then
         touch /var/www/html/.env
     fi
 fi
+
+# Synchronize runtime environment variables into .env so web server and CLI have identical credentials
+for KEY in DB_CONNECTION DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD CACHE_STORE SESSION_DRIVER QUEUE_CONNECTION APP_NAME APP_ENV APP_DEBUG APP_URL; do
+    VAL=$(eval echo "\$$KEY")
+    if [ -n "$VAL" ]; then
+        if grep -q "^${KEY}=" /var/www/html/.env; then
+            sed -i "s|^${KEY}=.*|${KEY}=${VAL}|" /var/www/html/.env
+        elif grep -q "^# *${KEY}=" /var/www/html/.env; then
+            sed -i "s|^# *${KEY}=.*|${KEY}=${VAL}|" /var/www/html/.env
+        else
+            echo "${KEY}=${VAL}" >> /var/www/html/.env
+        fi
+    fi
+done
 
 # 2. Ensure application key exists
 if ! grep -q "^APP_KEY=base64:" /var/www/html/.env 2>/dev/null; then

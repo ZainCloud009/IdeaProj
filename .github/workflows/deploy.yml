@@ -117,6 +117,11 @@ jobs:
             if [ ! -f .env ]; then
               cp .env.example .env
             fi
+            sed -i 's/^DB_CONNECTION=.*/DB_CONNECTION=mysql/' .env
+            sed -i 's/^#* *DB_HOST=.*/DB_HOST=db/' .env
+            sed -i 's/^#* *DB_PORT=.*/DB_PORT=3306/' .env
+            sed -i 's/^#* *DB_DATABASE=.*/DB_DATABASE=idea/' .env
+            sed -i 's/^#* *DB_USERNAME=.*/DB_USERNAME=root/' .env
             if [ -n "$DB_PASSWORD" ]; then
               if grep -q "^DB_PASSWORD=" .env; then
                 sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=$DB_PASSWORD|" .env
@@ -132,9 +137,31 @@ jobs:
             $COMPOSE_CMD down --remove-orphans 2>/dev/null || true
             $COMPOSE_CMD up -d
 
-            # 8. Wait for containers to initialize and run migrations
-            echo "==> Waiting for containers to initialize..."
+            # 9. Wait for database and sync privileges
+            echo "==> Waiting for database container to become healthy..."
             sleep 12
+
+            DB_PASS="${DB_PASSWORD:-secret_password}"
+            docker exec ideaproj-db mariadb -u root -proot_password -e "
+              ALTER USER 'root'@'%' IDENTIFIED BY '${DB_PASS}';
+              GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY '${DB_PASS}' WITH GRANT OPTION;
+              CREATE USER IF NOT EXISTS 'idea_user'@'%' IDENTIFIED BY '${DB_PASS}';
+              ALTER USER 'idea_user'@'%' IDENTIFIED BY '${DB_PASS}';
+              GRANT ALL PRIVILEGES ON *.* TO 'idea_user'@'%';
+              FLUSH PRIVILEGES;
+            " 2>/dev/null || docker exec ideaproj-db mariadb -u root -p"${DB_PASS}" -e "
+              GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY '${DB_PASS}' WITH GRANT OPTION;
+              CREATE USER IF NOT EXISTS 'idea_user'@'%' IDENTIFIED BY '${DB_PASS}';
+              ALTER USER 'idea_user'@'%' IDENTIFIED BY '${DB_PASS}';
+              GRANT ALL PRIVILEGES ON *.* TO 'idea_user'@'%';
+              FLUSH PRIVILEGES;
+            " 2>/dev/null || true
+
+            # Run migrations to ensure all tables exist (users, sessions, cache, ideas, steps)
+            echo "==> Running Laravel database migrations inside container..."
+            docker exec ideaproj-app php /var/www/html/artisan migrate --force || true
+            docker exec ideaproj-app php /var/www/html/artisan optimize:clear || true
+            docker exec ideaproj-app php /var/www/html/artisan config:cache || true
 
             echo "==> Active Docker Containers:"
             docker ps --filter "name=ideaproj"
