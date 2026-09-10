@@ -175,7 +175,13 @@ jobs:
               curl -I http://127.0.0.1/ || true
             fi
 
-            # 9. Clean up dangling images to save disk space
-            docker image prune -f
+            # 10. Aggressive Docker cleanup to reclaim disk space
+            echo "==> Cleaning up build caches and temporary builder images..."
+            docker image rm node:22-alpine composer:2 2>/dev/null || true
+            docker system prune -f
+            docker builder prune -af --keep-storage 200MB 2>/dev/null || true
+
+            echo "==> Docker Disk Usage Summary:"
+            docker system df
 
             echo "==> Docker Deployment on EC2 completed successfully!"

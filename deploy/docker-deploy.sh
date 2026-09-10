@@ -113,8 +113,13 @@ else
     curl -I http://127.0.0.1/ || true
 fi
 
-echo "==> Pruning unused dangling images..."
-docker image prune -f
+echo "==> Cleaning up build caches and temporary builder images..."
+docker image rm node:22-alpine composer:2 2>/dev/null || true
+docker system prune -f
+docker builder prune -af --keep-storage 200MB 2>/dev/null || true
+
+echo "==> Docker Disk Usage Summary:"
+docker system df
 
 echo "=============================================================================="
 echo " Docker deployment completed successfully!"

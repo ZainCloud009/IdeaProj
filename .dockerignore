@@ -7,6 +7,8 @@
 node_modules
 vendor
 Doc
+tests
+deploy
 storage/framework/cache/*
 storage/framework/sessions/*
 storage/framework/views/*
@@ -16,8 +18,12 @@ storage/logs/*
 !storage/framework/views/.gitignore
 !storage/logs/.gitignore
 .env
-.env.backup
+.env.*
 .phpunit.result.cache
+phpunit.xml
+rector.php
 Dockerfile*
 docker-compose*
 README.md
+*.log
+*.md
