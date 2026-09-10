@@ -36,7 +36,7 @@ COPY config ./config
 COPY database ./database
 COPY routes ./routes
 
-RUN composer dump-autoload --optimize --no-dev
+RUN composer dump-autoload --optimize --no-dev --no-scripts
 
 # ==============================================================================
 # Stage 3: Production Application Container (PHP 8.2 + Apache)
