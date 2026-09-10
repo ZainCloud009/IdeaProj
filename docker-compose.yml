@@ -1,5 +1,6 @@
 services:
   app:
+    image: ideaproj-app:latest
     build:
       context: .
       dockerfile: Dockerfile

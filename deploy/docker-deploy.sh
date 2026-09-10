@@ -35,6 +35,17 @@ else
 fi
 echo "==> Using compose command: $COMPOSE_CMD"
 
+# Ensure modern buildx is available (requires >= 0.17.0 for Compose)
+BUILDX_VER=$(docker buildx version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || echo "v0.0.0")
+if [ -z "$BUILDX_VER" ] || [ "$BUILDX_VER" \< "v0.17.0" ]; then
+    echo "==> Upgrading buildx to v0.21.1 (current: $BUILDX_VER)..."
+    sudo mkdir -p /usr/local/lib/docker/cli-plugins /usr/lib/docker/cli-plugins ~/.docker/cli-plugins
+    sudo curl -SL "https://github.com/docker/buildx/releases/download/v0.21.1/buildx-v0.21.1.linux-amd64" -o /usr/local/lib/docker/cli-plugins/docker-buildx
+    sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+    sudo cp -f /usr/local/lib/docker/cli-plugins/docker-buildx /usr/lib/docker/cli-plugins/docker-buildx 2>/dev/null || true
+    sudo cp -f /usr/local/lib/docker/cli-plugins/docker-buildx ~/.docker/cli-plugins/docker-buildx 2>/dev/null || true
+fi
+
 echo "==> Stopping host Apache (httpd) to release port 80 for Docker..."
 sudo systemctl stop httpd 2>/dev/null || true
 sudo systemctl disable httpd 2>/dev/null || true
@@ -49,9 +60,11 @@ if [ ! -f .env ]; then
     cp .env.example .env
 fi
 
-echo "==> Building and launching Docker containers..."
+echo "==> Building application image with Docker..."
+docker build -t ideaproj-app:latest .
+
+echo "==> Launching Docker containers..."
 $COMPOSE_CMD down --remove-orphans 2>/dev/null || true
-$COMPOSE_CMD build
 $COMPOSE_CMD up -d
 
 echo "==> Waiting for containers to initialize..."

@@ -67,7 +67,18 @@ jobs:
             fi
             echo "==> Using compose command: $COMPOSE_CMD"
 
-            # 3. Create Swap file if not present (prevents OOM during build on t3.small)
+            # 3. Ensure modern buildx is available (requires >= 0.17.0 for Compose)
+            BUILDX_VER=$(docker buildx version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || echo "v0.0.0")
+            if [ -z "$BUILDX_VER" ] || [ "$BUILDX_VER" \< "v0.17.0" ]; then
+              echo "==> Upgrading buildx to v0.21.1 (current: $BUILDX_VER)..."
+              sudo mkdir -p /usr/local/lib/docker/cli-plugins /usr/lib/docker/cli-plugins ~/.docker/cli-plugins
+              sudo curl -SL "https://github.com/docker/buildx/releases/download/v0.21.1/buildx-v0.21.1.linux-amd64" -o /usr/local/lib/docker/cli-plugins/docker-buildx
+              sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+              sudo cp -f /usr/local/lib/docker/cli-plugins/docker-buildx /usr/lib/docker/cli-plugins/docker-buildx 2>/dev/null || true
+              sudo cp -f /usr/local/lib/docker/cli-plugins/docker-buildx ~/.docker/cli-plugins/docker-buildx 2>/dev/null || true
+            fi
+
+            # 4. Create Swap file if not present (prevents OOM during build on t3.small)
             if [ ! -f /swapfile ]; then
               echo "==> Setting up 2GB Swap memory for stable Docker builds..."
               sudo fallocate -l 2G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
@@ -77,12 +88,12 @@ jobs:
               echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null || true
             fi
 
-            # 4. Stop host Apache to release port 80 for Docker
+            # 5. Stop host Apache to release port 80 for Docker
             echo "==> Stopping host Apache to free port 80 for Docker container..."
             sudo systemctl stop httpd 2>/dev/null || true
             sudo systemctl disable httpd 2>/dev/null || true
 
-            # 5. Sync repository code
+            # 6. Sync repository code
             APP_DIR="/var/www/html/IdeaProj"
             sudo mkdir -p "$APP_DIR"
             sudo chown -R "$CURRENT_USER:$CURRENT_USER" "$APP_DIR"
@@ -98,7 +109,7 @@ jobs:
               cd "$APP_DIR"
             fi
 
-            # 6. Ensure .env exists and database credentials are configured
+            # 7. Ensure .env exists and database credentials are configured
             if [ ! -f .env ]; then
               cp .env.example .env
             fi
@@ -110,10 +121,11 @@ jobs:
               fi
             fi
 
-            # 7. Build and run containers via Docker Compose
-            echo "==> Building and launching Docker containers..."
+            # 8. Build and run containers via Docker Compose
+            echo "==> Building application image with Docker..."
+            docker build -t ideaproj-app:latest .
+            echo "==> Launching Docker containers..."
             $COMPOSE_CMD down --remove-orphans 2>/dev/null || true
-            $COMPOSE_CMD build
             $COMPOSE_CMD up -d
 
             # 8. Wait for containers to initialize and run migrations
