@@ -8,14 +8,32 @@ echo "==> Ensuring Docker service is active..."
 sudo systemctl enable --now docker
 sudo usermod -aG docker "$(whoami)" 2>/dev/null || true
 
-echo "==> Ensuring Docker Compose is installed..."
-if ! docker compose version >/dev/null 2>&1; then
-    sudo dnf install -y docker-compose-plugin 2>/dev/null || {
-        sudo curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
-        sudo chmod +x /usr/local/bin/docker-compose
-        sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
-    }
+echo "==> Ensuring Docker Compose is available..."
+sudo mkdir -p /usr/local/lib/docker/cli-plugins /usr/lib/docker/cli-plugins
+if [ -f /usr/local/bin/docker-compose ]; then
+    sudo cp -f /usr/local/bin/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose 2>/dev/null || true
+    sudo cp -f /usr/local/bin/docker-compose /usr/lib/docker/cli-plugins/docker-compose 2>/dev/null || true
+    sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose /usr/lib/docker/cli-plugins/docker-compose 2>/dev/null || true
 fi
+
+if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
+    echo "==> Installing Docker Compose..."
+    sudo curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" -o /usr/local/lib/docker/cli-plugins/docker-compose
+    sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+    sudo cp -f /usr/local/lib/docker/cli-plugins/docker-compose /usr/lib/docker/cli-plugins/docker-compose 2>/dev/null || true
+    sudo ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
+    sudo ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
+fi
+
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD="docker-compose"
+else
+    echo "==> Error: Docker Compose could not be initialized."
+    exit 1
+fi
+echo "==> Using compose command: $COMPOSE_CMD"
 
 echo "==> Stopping host Apache (httpd) to release port 80 for Docker..."
 sudo systemctl stop httpd 2>/dev/null || true
@@ -32,9 +50,9 @@ if [ ! -f .env ]; then
 fi
 
 echo "==> Building and launching Docker containers..."
-docker compose down --remove-orphans 2>/dev/null || true
-docker compose build --pull
-docker compose up -d
+$COMPOSE_CMD down --remove-orphans 2>/dev/null || true
+$COMPOSE_CMD build
+$COMPOSE_CMD up -d
 
 echo "==> Waiting for containers to initialize..."
 sleep 10
