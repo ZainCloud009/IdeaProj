@@ -39,12 +39,16 @@ echo "==> Using compose command: $COMPOSE_CMD"
 BUILDX_VER=$(docker buildx version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || echo "v0.0.0")
 if [ -z "$BUILDX_VER" ] || [ "$BUILDX_VER" \< "v0.17.0" ]; then
     echo "==> Upgrading buildx to v0.21.1 (current: $BUILDX_VER)..."
-    sudo mkdir -p /usr/local/lib/docker/cli-plugins /usr/lib/docker/cli-plugins ~/.docker/cli-plugins
+    sudo mkdir -p /usr/local/lib/docker/cli-plugins /usr/lib/docker/cli-plugins
     sudo curl -SL "https://github.com/docker/buildx/releases/download/v0.21.1/buildx-v0.21.1.linux-amd64" -o /usr/local/lib/docker/cli-plugins/docker-buildx
     sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
     sudo cp -f /usr/local/lib/docker/cli-plugins/docker-buildx /usr/lib/docker/cli-plugins/docker-buildx 2>/dev/null || true
-    sudo cp -f /usr/local/lib/docker/cli-plugins/docker-buildx ~/.docker/cli-plugins/docker-buildx 2>/dev/null || true
 fi
+
+# Ensure $HOME/.docker exists and is owned by current user
+sudo mkdir -p "$HOME/.docker"
+sudo chown -R "$(whoami):$(whoami)" "$HOME/.docker"
+sudo chmod -R 775 "$HOME/.docker"
 
 echo "==> Stopping host Apache (httpd) to release port 80 for Docker..."
 sudo systemctl stop httpd 2>/dev/null || true
