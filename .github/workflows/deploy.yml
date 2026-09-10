@@ -239,14 +239,26 @@ jobs:
               exit 1;
             ' ERR
 
-            # 10. Run migrations and cache optimizations (clear old view/config cache)
+            # 10. Run migrations and cache optimizations
             if ! grep -q "^APP_KEY=base64:" "$SHARED_DIR/.env" 2>/dev/null; then
               echo "==> Generating application key..."
               php artisan key:generate --force
             fi
-            php artisan storage:link --quiet || true
-            php artisan optimize:clear --quiet
+
+            # Clear file-based configuration, view, and route caches without touching database cache store
+            php artisan config:clear --quiet || true
+            php artisan view:clear --quiet || true
+            php artisan route:clear --quiet || true
+
+            # Run database migrations FIRST to ensure all tables (cache, sessions, jobs, etc.) exist
+            echo "==> Running database migrations..."
             php artisan migrate --force
+
+            # Now that database tables exist, safely clear application cache and link storage
+            php artisan cache:clear --quiet || true
+            php artisan storage:link --quiet || true
+
+            # Warm production caches
             php artisan config:cache --quiet
             php artisan route:cache --quiet
             php artisan view:cache --quiet
