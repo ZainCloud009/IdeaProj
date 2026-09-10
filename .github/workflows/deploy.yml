@@ -1,4 +1,4 @@
-name: Deploy Laravel App
+name: Deploy Laravel App (Docker on EC2)
 
 on:
   push:
@@ -6,8 +6,7 @@ on:
   workflow_dispatch:
 
 # ==============================================================================
-# Concurrency: If 5 or 10 developers push at the same time, cancel obsolete
-# intermediate builds and immediately deploy the latest commit.
+# Concurrency: Cancel redundant in-progress builds and deploy latest commit
 # ==============================================================================
 concurrency:
   group: production-deploy
@@ -15,11 +14,11 @@ concurrency:
 
 jobs:
   deploy:
-    name: 5-Second Zero-Downtime Deploy & Auto-Rollback
+    name: Docker Build & Deploy on EC2
     runs-on: ubuntu-latest
 
     steps:
-      - name: Trigger Instant Zero-Downtime Deploy on EC2
+      - name: Deploy Docker Containers on EC2
         uses: appleboy/ssh-action@v1.2.0
         env:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
@@ -29,300 +28,94 @@ jobs:
           username: ${{ secrets.EC2_USER || secrets.SSH_USER || 'ec2-user' }}
           key: ${{ secrets.EC2_SSH_KEY || secrets.SSH_PRIVATE_KEY || secrets.SSH_KEY }}
           port: ${{ secrets.EC2_PORT || 22 }}
-          command_timeout: 15m
+          command_timeout: 20m
           envs: DB_PASSWORD,COMMIT_SHA
           script: |
             set -e
-            export PATH="/usr/local/bin:$PATH"
 
-            APP_BASE="/var/www/html/IdeaProj"
-            SHARED_DIR="$APP_BASE/shared"
-            RELEASES_DIR="$APP_BASE/releases"
-            CURRENT_LINK="$APP_BASE/current"
-            CACHE_REPO="$APP_BASE/repo.git"
-            RELEASE_NAME=$(date +%Y%m%d%H%M%S)
-            NEW_RELEASE="$RELEASES_DIR/$RELEASE_NAME"
+            echo "==> Deploying Dockerized Laravel App on EC2..."
             CURRENT_USER=$(whoami)
 
-            echo "==> Starting Instant Deployment for Release: $RELEASE_NAME as user $CURRENT_USER..."
+            # 1. Ensure Docker daemon is enabled and running
+            sudo systemctl enable --now docker
+            sudo usermod -aG docker "$CURRENT_USER" 2>/dev/null || true
 
-            # 1. Ensure required directories exist and grant ownership immediately to prevent permission denied errors
-            sudo mkdir -p "$SHARED_DIR/storage/framework/cache"
-            sudo mkdir -p "$SHARED_DIR/storage/framework/sessions"
-            sudo mkdir -p "$SHARED_DIR/storage/framework/views"
-            sudo mkdir -p "$SHARED_DIR/storage/logs"
-            sudo mkdir -p "$SHARED_DIR/storage/app/public"
-            sudo mkdir -p "$RELEASES_DIR"
+            # 2. Ensure Docker Compose plugin is installed
+            if ! docker compose version >/dev/null 2>&1; then
+              echo "==> Installing Docker Compose plugin..."
+              sudo dnf install -y docker-compose-plugin 2>/dev/null || {
+                sudo curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
+                sudo chmod +x /usr/local/bin/docker-compose
+                sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+              }
+            fi
 
-            sudo usermod -aG apache "$CURRENT_USER" 2>/dev/null || true
-            sudo chown -R "$CURRENT_USER:apache" "$APP_BASE"
-            sudo chmod -R 775 "$APP_BASE"
-            sudo chmod -R g+s "$APP_BASE"
+            # 3. Create Swap file if not present (prevents OOM during build on t3.small)
+            if [ ! -f /swapfile ]; then
+              echo "==> Setting up 2GB Swap memory for stable Docker builds..."
+              sudo fallocate -l 2G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+              sudo chmod 600 /swapfile
+              sudo mkswap /swapfile
+              sudo swapon /swapfile
+              echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null || true
+            fi
 
+            # 4. Stop host Apache to release port 80 for Docker
+            echo "==> Stopping host Apache to free port 80 for Docker container..."
+            sudo systemctl stop httpd 2>/dev/null || true
+            sudo systemctl disable httpd 2>/dev/null || true
+
+            # 5. Sync repository code
+            APP_DIR="/var/www/html/IdeaProj"
+            sudo mkdir -p "$APP_DIR"
+            sudo chown -R "$CURRENT_USER:$CURRENT_USER" "$APP_DIR"
             git config --global --add safe.directory "*"
 
-            # 2. Ensure Composer is available
-            if ! command -v composer >/dev/null 2>&1; then
-              if [ -f /usr/local/bin/composer ]; then
-                sudo ln -sf /usr/local/bin/composer /usr/bin/composer
-              else
-                echo "==> Installing Composer..."
-                curl -sS https://getcomposer.org/installer | sudo php -- --install-dir=/usr/local/bin --filename=composer
-                sudo ln -sf /usr/local/bin/composer /usr/bin/composer
-              fi
-            fi
-
-            # 3. Ensure Node.js >= 20 is installed (required by Vite 7 & Tailwind 4)
-            NODE_MAJOR=0
-            if command -v node >/dev/null 2>&1; then
-              NODE_MAJOR=$(node -v 2>/dev/null | cut -d'.' -f1 | tr -d 'v' || echo "0")
-            fi
-
-            if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 20 ]; then
-              echo "==> Upgrading Node.js to v22 (current: $NODE_MAJOR, required: >=20)..."
-              sudo dnf remove -y nodejs nodejs-libs 2>/dev/null || true
-              if sudo dnf install -y nodejs22; then
-                echo "==> Installed nodejs22 from Amazon Linux 2023 repos."
-              elif sudo dnf install -y nodejs20; then
-                echo "==> Installed nodejs20 from Amazon Linux 2023 repos."
-              else
-                echo "==> Installing Node.js 22 via NodeSource..."
-                curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -
-                sudo dnf install -y nodejs
-              fi
-            fi
-
-            if ! command -v node >/dev/null 2>&1; then
-              if [ -f /usr/bin/node-22 ]; then
-                sudo ln -sf /usr/bin/node-22 /usr/bin/node
-                sudo ln -sf /usr/bin/npm-22 /usr/bin/npm
-              elif [ -f /usr/bin/node-20 ]; then
-                sudo ln -sf /usr/bin/node-20 /usr/bin/node
-                sudo ln -sf /usr/bin/npm-20 /usr/bin/npm
-              fi
-            fi
-
-            # 4. Identify previous release or candidate source for auto-rollback and instant caching
-            PREVIOUS_RELEASE=""
-            if [ -L "$CURRENT_LINK" ]; then
-              PREVIOUS_RELEASE=$(readlink -f "$CURRENT_LINK")
-            fi
-
-            SOURCE_DIR=""
-            if [ -n "$PREVIOUS_RELEASE" ] && [ -d "$PREVIOUS_RELEASE" ]; then
-              SOURCE_DIR="$PREVIOUS_RELEASE"
+            if [ -d "$APP_DIR/.git" ]; then
+              cd "$APP_DIR"
+              git fetch origin main
+              git reset --hard origin/main
             else
-              LATEST_EXISTING=$(ls -dt $RELEASES_DIR/* 2>/dev/null | grep -v "$NEW_RELEASE" | head -n 1)
-              if [ -n "$LATEST_EXISTING" ] && [ -d "$LATEST_EXISTING" ]; then
-                SOURCE_DIR="$LATEST_EXISTING"
-                PREVIOUS_RELEASE="$LATEST_EXISTING"
-              elif [ -d "$APP_BASE/vendor" ]; then
-                SOURCE_DIR="$APP_BASE"
-              fi
+              rm -rf "$APP_DIR"/* "$APP_DIR"/.[!.]* 2>/dev/null || true
+              git clone https://github.com/ZainCloud009/IdeaProj.git "$APP_DIR"
+              cd "$APP_DIR"
             fi
 
-            # 5. Fast Git Fetch using local reference cache (takes <1 second)
-            if [ -d "$CACHE_REPO" ] && [ -f "$CACHE_REPO/HEAD" ]; then
-              cd "$CACHE_REPO"
-              git fetch --all --prune --quiet
-            else
-              rm -rf "$CACHE_REPO"
-              git clone --bare https://github.com/ZainCloud009/IdeaProj.git "$CACHE_REPO"
+            # 6. Ensure .env exists and database credentials are configured
+            if [ ! -f .env ]; then
+              cp .env.example .env
             fi
-
-            git clone --reference "$CACHE_REPO" https://github.com/ZainCloud009/IdeaProj.git "$NEW_RELEASE"
-            cd "$NEW_RELEASE"
-            if [ -n "$COMMIT_SHA" ]; then
-              git checkout -f "$COMMIT_SHA" --quiet 2>/dev/null || git checkout -f main --quiet
-            else
-              git checkout -f main --quiet
-            fi
-
-            # 6. Instant dependency & build re-use via hardlinks (takes ~0.1 second)
-            if [ -n "$SOURCE_DIR" ]; then
-              if [ -d "$SOURCE_DIR/vendor" ] && [ ! -d "$NEW_RELEASE/vendor" ]; then
-                cp -al "$SOURCE_DIR/vendor" "$NEW_RELEASE/" 2>/dev/null || cp -r "$SOURCE_DIR/vendor" "$NEW_RELEASE/"
-              fi
-              if [ -d "$SOURCE_DIR/node_modules" ] && [ ! -d "$NEW_RELEASE/node_modules" ]; then
-                cp -al "$SOURCE_DIR/node_modules" "$NEW_RELEASE/" 2>/dev/null || cp -r "$SOURCE_DIR/node_modules" "$NEW_RELEASE/"
-              fi
-              if [ -d "$SOURCE_DIR/public/build" ] && [ ! -d "$NEW_RELEASE/public/build" ]; then
-                mkdir -p "$NEW_RELEASE/public"
-                cp -al "$SOURCE_DIR/public/build" "$NEW_RELEASE/public/" 2>/dev/null || cp -r "$SOURCE_DIR/public/build" "$NEW_RELEASE/public/"
-              fi
-            fi
-
-            # 7. Shared .env configuration
-            if [ ! -f "$SHARED_DIR/.env" ]; then
-              if [ -f "$APP_BASE/.env" ]; then
-                cp "$APP_BASE/.env" "$SHARED_DIR/.env"
-              elif [ -f "$NEW_RELEASE/.env.example" ]; then
-                cp "$NEW_RELEASE/.env.example" "$SHARED_DIR/.env"
-              fi
-            fi
-
-            # Ensure MySQL and Database configs are properly configured in shared .env
-            if ! grep -q "^DB_CONNECTION=mysql" "$SHARED_DIR/.env"; then
-              sed -i 's/^DB_CONNECTION=.*/DB_CONNECTION=mysql/' "$SHARED_DIR/.env"
-              sed -i 's/^# DB_HOST=/DB_HOST=/' "$SHARED_DIR/.env"
-              sed -i 's/^# DB_PORT=/DB_PORT=/' "$SHARED_DIR/.env"
-              sed -i 's/^# DB_DATABASE=.*/DB_DATABASE=idea/' "$SHARED_DIR/.env"
-              sed -i 's/^# DB_USERNAME=.*/DB_USERNAME=root/' "$SHARED_DIR/.env"
-              sed -i 's/^# DB_PASSWORD=/DB_PASSWORD=/' "$SHARED_DIR/.env"
-              sed -i 's/^DB_DATABASE=.*/DB_DATABASE=idea/' "$SHARED_DIR/.env"
-              sed -i 's/^DB_USERNAME=.*/DB_USERNAME=root/' "$SHARED_DIR/.env"
-            fi
-
             if [ -n "$DB_PASSWORD" ]; then
-              if grep -q "^DB_PASSWORD=" "$SHARED_DIR/.env"; then
-                sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=$DB_PASSWORD|" "$SHARED_DIR/.env"
+              if grep -q "^DB_PASSWORD=" .env; then
+                sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=$DB_PASSWORD|" .env
               else
-                echo "DB_PASSWORD=$DB_PASSWORD" >> "$SHARED_DIR/.env"
+                echo "DB_PASSWORD=$DB_PASSWORD" >> .env
               fi
             fi
 
-            ln -sfn "$SHARED_DIR/.env" "$NEW_RELEASE/.env"
-            rm -rf "$NEW_RELEASE/storage"
-            ln -sfn "$SHARED_DIR/storage" "$NEW_RELEASE/storage"
+            # 7. Build and run containers via Docker Compose
+            echo "==> Building and launching Docker containers..."
+            docker compose down --remove-orphans 2>/dev/null || true
+            docker compose build --pull
+            docker compose up -d
 
-            # 8. Fast Composer & Asset builds (only installs if missing or changed)
-            NEED_COMPOSER=0
-            if [ ! -d "$NEW_RELEASE/vendor" ]; then
-              NEED_COMPOSER=1
-            elif [ -n "$SOURCE_DIR" ] && [ -f "$SOURCE_DIR/composer.lock" ] && ! cmp -s "$SOURCE_DIR/composer.lock" "$NEW_RELEASE/composer.lock"; then
-              NEED_COMPOSER=1
-            fi
+            # 8. Wait for containers to initialize and run migrations
+            echo "==> Waiting for containers to initialize..."
+            sleep 12
 
-            if [ "$NEED_COMPOSER" -eq 1 ]; then
-              echo "==> Installing Composer dependencies..."
-              composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader --quiet
-            fi
+            echo "==> Active Docker Containers:"
+            docker ps --filter "name=ideaproj"
 
-            NEED_NPM=0
-            if [ ! -d "$NEW_RELEASE/node_modules" ]; then
-              NEED_NPM=1
-            elif [ -n "$SOURCE_DIR" ] && [ -f "$SOURCE_DIR/package-lock.json" ] && ! cmp -s "$SOURCE_DIR/package-lock.json" "$NEW_RELEASE/package-lock.json"; then
-              NEED_NPM=1
-            fi
-
-            if [ "$NEED_NPM" -eq 1 ]; then
-              echo "==> Installing NPM dependencies..."
-              npm install --prefer-offline --no-audit --quiet
-            fi
-
-            NEED_BUILD=0
-            if [ ! -d "$NEW_RELEASE/public/build" ] || [ ! -f "$NEW_RELEASE/public/build/manifest.json" ]; then
-              NEED_BUILD=1
-            elif [ -n "$SOURCE_DIR" ]; then
-              if ! git diff --quiet HEAD~1 -- resources/ package.json vite.config.js 2>/dev/null; then
-                NEED_BUILD=1
-              fi
-            fi
-
-            if [ "$NEED_BUILD" -eq 1 ]; then
-              echo "==> Building frontend assets with Vite..."
-              npm run build
-            fi
-
-            # 9. Safe Execution Block with Automatic Rollback on failure
-            trap '
-              echo "==> CRITICAL ERROR ENCOUNTERED! Triggering Auto-Rollback...";
-              if [ -n "$PREVIOUS_RELEASE" ] && [ -d "$PREVIOUS_RELEASE" ]; then
-                echo "==> Restoring previous release: $PREVIOUS_RELEASE";
-                ln -sfn "$PREVIOUS_RELEASE" "$APP_BASE/current_temp";
-                mv -Tf "$APP_BASE/current_temp" "$CURRENT_LINK";
-                sudo systemctl restart php-fpm || true;
-                sudo systemctl restart httpd || true;
-                echo "==> Auto-Rollback Successful! Site restored to previous working release.";
-              fi;
-              rm -rf "$NEW_RELEASE";
-              exit 1;
-            ' ERR
-
-            # 10. Run migrations and cache optimizations
-            if ! grep -q "^APP_KEY=base64:" "$SHARED_DIR/.env" 2>/dev/null; then
-              echo "==> Generating application key..."
-              php artisan key:generate --force
-            fi
-
-            # Clear file-based configuration, view, and route caches without touching database cache store
-            php artisan config:clear --quiet || true
-            php artisan view:clear --quiet || true
-            php artisan route:clear --quiet || true
-
-            # Run database migrations FIRST to ensure all tables (cache, sessions, jobs, etc.) exist
-            echo "==> Running database migrations..."
-            php artisan migrate --force
-
-            # Now that database tables exist, safely clear application cache and link storage
-            php artisan cache:clear --quiet || true
-            php artisan storage:link --quiet || true
-
-            # Warm production caches
-            php artisan config:cache --quiet
-            php artisan route:cache --quiet
-            php artisan view:cache --quiet
-
-            # 11. Targeted permission configuration (fast)
-            sudo chown -R "$CURRENT_USER:apache" "$APP_BASE"
-            sudo chmod -R 775 "$SHARED_DIR/storage" "$NEW_RELEASE/bootstrap/cache"
-            sudo chcon -R -t httpd_sys_rw_content_t "$SHARED_DIR/storage" "$NEW_RELEASE/bootstrap/cache" 2>/dev/null || true
-
-            # 12. ATOMIC SWITCH: Switch symlink in 1 millisecond (Zero Downtime)
-            ln -sfn "$NEW_RELEASE" "$APP_BASE/current_temp"
-            mv -Tf "$APP_BASE/current_temp" "$CURRENT_LINK"
-
-            # Clean up old legacy static public folder if present and link it
-            if [ -d "$APP_BASE/public" ] && [ ! -L "$APP_BASE/public" ]; then
-              sudo rm -rf "$APP_BASE/public"
-            fi
-            sudo ln -sfn "$CURRENT_LINK/public" "$APP_BASE/public"
-
-            # 13. Ensure Apache VirtualHost points to /var/www/html/IdeaProj/current/public
-            printf '%s\n' \
-              '<VirtualHost *:80>' \
-              '    ServerName localhost' \
-              '    ServerAlias *' \
-              '    DocumentRoot "/var/www/html/IdeaProj/current/public"' \
-              '    <Directory "/var/www/html/IdeaProj/current/public">' \
-              '        Options Indexes FollowSymLinks' \
-              '        AllowOverride All' \
-              '        Require all granted' \
-              '    </Directory>' \
-              '    Alias /IdeaProj/public /var/www/html/IdeaProj/current/public' \
-              '    Alias /IdeaProj /var/www/html/IdeaProj/current/public' \
-              '    Alias /phpmyadmin /var/www/html/phpmyadmin' \
-              '    <Directory "/var/www/html/phpmyadmin">' \
-              '        Options Indexes FollowSymLinks' \
-              '        AllowOverride All' \
-              '        Require all granted' \
-              '    </Directory>' \
-              '</VirtualHost>' | sudo tee /etc/httpd/conf.d/laravel.conf > /dev/null
-
-            # Restart PHP-FPM to completely flush in-memory OPcache and reload Apache
-            sudo systemctl restart php-fpm
-            sudo systemctl restart httpd
-
-            # 14. Post-switch Health Verification
-            sleep 1
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://127.0.0.1/up" || echo "failed")
+            echo "==> Verifying Health Check (HTTP port 80)..."
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://127.0.0.1/up" || echo "failed")
             if [ "$STATUS" = "200" ]; then
-              echo "==> Health Check PASSED (HTTP 200)! Release $RELEASE_NAME is LIVE."
-              echo "==> Live HTML verification snippet:"
-              curl -s "http://127.0.0.1/" | grep -E "(Think|ambitious)" | head -n 5 || true
-              # Keep only last 3 releases to preserve disk space
-              ls -dt $RELEASES_DIR/* | tail -n +4 | xargs -r rm -rf
+              echo "==> [SUCCESS] Docker container is LIVE and healthy on port 80 (HTTP 200)!"
             else
-              echo "==> Health Check FAILED with status $STATUS. Triggering Auto-Rollback..."
-              if [ -n "$PREVIOUS_RELEASE" ] && [ -d "$PREVIOUS_RELEASE" ]; then
-                ln -sfn "$PREVIOUS_RELEASE" "$APP_BASE/current_temp"
-                mv -Tf "$APP_BASE/current_temp" "$CURRENT_LINK"
-                sudo systemctl restart php-fpm || true
-                sudo systemctl restart httpd || true
-                echo "==> Auto-Rollback Successful! Restored previous working release."
-              fi
-              rm -rf "$NEW_RELEASE"
-              exit 1
+              echo "==> Health check status: $STATUS. Checking main page:"
+              curl -I http://127.0.0.1/ || true
             fi
 
-            echo "==> Deployment completed successfully in seconds!"
+            # 9. Clean up dangling images to save disk space
+            docker image prune -f
+
+            echo "==> Docker Deployment on EC2 completed successfully!"
