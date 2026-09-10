@@ -19,6 +19,7 @@ storage/logs/*
 !storage/logs/.gitignore
 .env
 .env.*
+!.env.example
 .phpunit.result.cache
 phpunit.xml
 rector.php

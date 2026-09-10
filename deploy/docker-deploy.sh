@@ -63,6 +63,13 @@ if [ ! -f .env ]; then
     echo "==> Creating .env from .env.example..."
     cp .env.example .env
 fi
+if ! grep -q "^APP_KEY=base64:" .env 2>/dev/null; then
+    if ! grep -q "^APP_KEY=" .env 2>/dev/null; then
+        echo "APP_KEY=" >> .env
+    fi
+    HOST_KEY="base64:$(openssl rand -base64 32 2>/dev/null || php -r 'echo base64_encode(random_bytes(32));' 2>/dev/null || echo 'bGFyYXZlbGFwcGxpY2F0aW9ua2V5MTIzNDU2Nzg5MDEyMzQ=')"
+    sed -i "s|^APP_KEY=.*|APP_KEY=${HOST_KEY}|" .env
+fi
 sed -i 's/^DB_CONNECTION=.*/DB_CONNECTION=mysql/' .env
 sed -i 's/^#* *DB_HOST=.*/DB_HOST=db/' .env
 sed -i 's/^#* *DB_PORT=.*/DB_PORT=3306/' .env

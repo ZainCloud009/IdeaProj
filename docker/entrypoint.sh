@@ -14,7 +14,7 @@ if [ ! -f /var/www/html/.env ]; then
 fi
 
 # Synchronize runtime environment variables into .env so web server and CLI have identical credentials
-for KEY in DB_CONNECTION DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD CACHE_STORE SESSION_DRIVER QUEUE_CONNECTION APP_NAME APP_ENV APP_DEBUG APP_URL; do
+for KEY in APP_KEY DB_CONNECTION DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD CACHE_STORE SESSION_DRIVER QUEUE_CONNECTION APP_NAME APP_ENV APP_DEBUG APP_URL; do
     VAL=$(eval echo "\$$KEY")
     if [ -n "$VAL" ]; then
         if grep -q "^${KEY}=" /var/www/html/.env; then
@@ -27,10 +27,26 @@ for KEY in DB_CONNECTION DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD CAC
     fi
 done
 
-# 2. Ensure application key exists
+# 2. Ensure application key exists and is valid
+if ! grep -q "^APP_KEY=" /var/www/html/.env 2>/dev/null; then
+    echo "APP_KEY=" >> /var/www/html/.env
+fi
+
 if ! grep -q "^APP_KEY=base64:" /var/www/html/.env 2>/dev/null; then
-    echo "==> Generating application key..."
-    php /var/www/html/artisan key:generate --force --no-interaction
+    if [ -n "$APP_KEY" ]; then
+        echo "==> Setting application key from environment..."
+        sed -i "s|^APP_KEY=.*|APP_KEY=${APP_KEY}|" /var/www/html/.env
+    else
+        echo "==> Generating application key via artisan..."
+        php /var/www/html/artisan key:generate --force --no-interaction || true
+    fi
+fi
+
+# Fallback: if key is still missing or not base64, generate cryptographically secure 32-byte key via PHP
+if ! grep -q "^APP_KEY=base64:" /var/www/html/.env 2>/dev/null; then
+    echo "==> Setting fallback 32-byte encryption key..."
+    FALLBACK_KEY="base64:$(php -r 'echo base64_encode(random_bytes(32));')"
+    sed -i "s|^APP_KEY=.*|APP_KEY=${FALLBACK_KEY}|" /var/www/html/.env
 fi
 
 # 3. Create storage symlink
