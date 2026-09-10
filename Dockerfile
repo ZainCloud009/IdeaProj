@@ -46,27 +46,11 @@ FROM php:8.2-apache
 
 WORKDIR /var/www/html
 
-# Install runtime libraries, compile extensions with temporary build tools, and purge all dev packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libpng16-16 \
-        libjpeg62-turbo \
-        libfreetype6 \
-        libzip4 \
-        libonig5 \
-        libicu72 \
-        unzip \
-        curl \
-    && savedAptMark="$(apt-mark showmanual)" \
-    && apt-get install -y --no-install-recommends \
-        libpng-dev \
-        libjpeg-dev \
-        libfreetype6-dev \
-        libzip-dev \
-        libonig-dev \
-        libxml2-dev \
-        libicu-dev \
-    && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install -j$(nproc) \
+# Install official PHP extension installer
+COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
+
+# Install required PHP extensions with automatic dependency resolution & cleanup
+RUN install-php-extensions \
         pdo_mysql \
         bcmath \
         gd \
@@ -76,11 +60,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xml \
         zip \
     && a2enmod rewrite \
-    && apt-mark auto '.*' > /dev/null \
-    && apt-mark manual $savedAptMark > /dev/null \
-    && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /usr/share/doc/* /usr/share/man/*
+    && rm -f /usr/local/bin/install-php-extensions
 
 # Configure Apache VirtualHost
 COPY docker/apache.conf /etc/apache2/sites-available/000-default.conf
