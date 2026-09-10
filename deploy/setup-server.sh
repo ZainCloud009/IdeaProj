@@ -81,13 +81,17 @@ if [ ! -d "/var/www/html/phpmyadmin" ]; then
 fi
 
 echo "==> Configuring directory permissions for ec2-user and apache..."
-sudo mkdir -p /var/www/html/IdeaProj/public
-sudo mkdir -p /var/www/html/IdeaProj/storage
-sudo mkdir -p /var/www/html/IdeaProj/bootstrap/cache
+sudo mkdir -p /var/www/html/IdeaProj/shared/storage/framework/cache
+sudo mkdir -p /var/www/html/IdeaProj/shared/storage/framework/sessions
+sudo mkdir -p /var/www/html/IdeaProj/shared/storage/framework/views
+sudo mkdir -p /var/www/html/IdeaProj/shared/storage/logs
+sudo mkdir -p /var/www/html/IdeaProj/shared/storage/app/public
+sudo mkdir -p /var/www/html/IdeaProj/releases
 
-sudo usermod -a -G apache ec2-user
+sudo usermod -aG apache ec2-user
 sudo chown -R ec2-user:apache /var/www/html/IdeaProj
-sudo chmod -R 775 /var/www/html/IdeaProj/storage /var/www/html/IdeaProj/bootstrap/cache
+sudo chmod -R 775 /var/www/html/IdeaProj
+sudo chmod -R g+s /var/www/html/IdeaProj
 
 echo "==> Restarting Apache and PHP-FPM..."
 sudo systemctl restart php-fpm

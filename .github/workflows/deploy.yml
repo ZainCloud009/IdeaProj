@@ -29,7 +29,7 @@ jobs:
           username: ${{ secrets.EC2_USER || secrets.SSH_USER || 'ec2-user' }}
           key: ${{ secrets.EC2_SSH_KEY || secrets.SSH_PRIVATE_KEY || secrets.SSH_KEY }}
           port: ${{ secrets.EC2_PORT || 22 }}
-          command_timeout: 90s
+          command_timeout: 15m
           envs: DB_PASSWORD,COMMIT_SHA
           script: |
             set -e
@@ -42,16 +42,24 @@ jobs:
             CACHE_REPO="$APP_BASE/repo.git"
             RELEASE_NAME=$(date +%Y%m%d%H%M%S)
             NEW_RELEASE="$RELEASES_DIR/$RELEASE_NAME"
+            CURRENT_USER=$(whoami)
 
-            echo "==> Starting Instant Deployment for Release: $RELEASE_NAME..."
+            echo "==> Starting Instant Deployment for Release: $RELEASE_NAME as user $CURRENT_USER..."
 
-            # 1. Ensure required directories exist
+            # 1. Ensure required directories exist and grant ownership immediately to prevent permission denied errors
             sudo mkdir -p "$SHARED_DIR/storage/framework/cache"
             sudo mkdir -p "$SHARED_DIR/storage/framework/sessions"
             sudo mkdir -p "$SHARED_DIR/storage/framework/views"
             sudo mkdir -p "$SHARED_DIR/storage/logs"
             sudo mkdir -p "$SHARED_DIR/storage/app/public"
             sudo mkdir -p "$RELEASES_DIR"
+
+            sudo usermod -aG apache "$CURRENT_USER" 2>/dev/null || true
+            sudo chown -R "$CURRENT_USER:apache" "$APP_BASE"
+            sudo chmod -R 775 "$APP_BASE"
+            sudo chmod -R g+s "$APP_BASE"
+
+            git config --global --add safe.directory "*"
 
             # 2. Ensure Composer is available
             if ! command -v composer >/dev/null 2>&1; then
@@ -114,10 +122,11 @@ jobs:
             fi
 
             # 5. Fast Git Fetch using local reference cache (takes <1 second)
-            if [ -d "$CACHE_REPO" ]; then
+            if [ -d "$CACHE_REPO" ] && [ -f "$CACHE_REPO/HEAD" ]; then
               cd "$CACHE_REPO"
               git fetch --all --prune --quiet
             else
+              rm -rf "$CACHE_REPO"
               git clone --bare https://github.com/ZainCloud009/IdeaProj.git "$CACHE_REPO"
             fi
 
@@ -231,6 +240,10 @@ jobs:
             ' ERR
 
             # 10. Run migrations and cache optimizations (clear old view/config cache)
+            if ! grep -q "^APP_KEY=base64:" "$SHARED_DIR/.env" 2>/dev/null; then
+              echo "==> Generating application key..."
+              php artisan key:generate --force
+            fi
             php artisan storage:link --quiet || true
             php artisan optimize:clear --quiet
             php artisan migrate --force
@@ -239,8 +252,9 @@ jobs:
             php artisan view:cache --quiet
 
             # 11. Targeted permission configuration (fast)
-            sudo chown -R ec2-user:apache "$NEW_RELEASE" "$SHARED_DIR/storage"
+            sudo chown -R "$CURRENT_USER:apache" "$APP_BASE"
             sudo chmod -R 775 "$SHARED_DIR/storage" "$NEW_RELEASE/bootstrap/cache"
+            sudo chcon -R -t httpd_sys_rw_content_t "$SHARED_DIR/storage" "$NEW_RELEASE/bootstrap/cache" 2>/dev/null || true
 
             # 12. ATOMIC SWITCH: Switch symlink in 1 millisecond (Zero Downtime)
             ln -sfn "$NEW_RELEASE" "$APP_BASE/current_temp"

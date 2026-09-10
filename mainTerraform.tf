@@ -112,9 +112,15 @@ usermod -aG apache ec2-user
 mysql -u root -e "CREATE DATABASE IF NOT EXISTS idea CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || true
 
 # Laravel Directory structure aur permissions
-mkdir -p /var/www/html/IdeaProj/shared/storage /var/www/html/IdeaProj/releases
+mkdir -p /var/www/html/IdeaProj/shared/storage/framework/cache
+mkdir -p /var/www/html/IdeaProj/shared/storage/framework/sessions
+mkdir -p /var/www/html/IdeaProj/shared/storage/framework/views
+mkdir -p /var/www/html/IdeaProj/shared/storage/logs
+mkdir -p /var/www/html/IdeaProj/shared/storage/app/public
+mkdir -p /var/www/html/IdeaProj/releases
 chown -R ec2-user:apache /var/www/html/IdeaProj
-chmod -R 775 /var/www/html/IdeaProj/shared/storage
+chmod -R 775 /var/www/html/IdeaProj
+chmod -R g+s /var/www/html/IdeaProj
 
 # Apache Virtual Host configure karna
 cat << 'VHOST' > /etc/httpd/conf.d/laravel.conf
